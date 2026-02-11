@@ -1,0 +1,9 @@
+# build
+*.exe
+
+# runtime output
+english_word.txt
+
+# python cache
+__pycache__/
+*.pyc
