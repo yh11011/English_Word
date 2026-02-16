@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-英文單字背誦系統 - 電腦版 GUI (Tkinter)
-提供圖形化介面，讓操作更直覺、更美觀
+VocabMaster - 現代化桌面版 GUI
+參考現代 Dashboard 設計，提供優雅的學習體驗
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, font
 import sqlite3
 import random
 from typing import List, Optional
@@ -69,7 +69,6 @@ class VocabularyDatabase:
     def add_word(self, english: str, chinese: str, folder: str) -> bool:
         """新增單字"""
         try:
-            # 檢查是否已存在
             self.cursor.execute("""
                 SELECT id FROM words WHERE folder = ? AND english = ?
             """, (folder.lower(), english.lower()))
@@ -77,7 +76,6 @@ class VocabularyDatabase:
             if self.cursor.fetchone():
                 return False
             
-            # 插入新單字
             self.cursor.execute("""
                 INSERT INTO words (english, chinese, folder, error_count)
                 VALUES (?, ?, ?, 0)
@@ -85,8 +83,7 @@ class VocabularyDatabase:
             
             self.connection.commit()
             return True
-        except sqlite3.Error as e:
-            print(f"新增單字錯誤: {e}")
+        except sqlite3.Error:
             return False
     
     def get_all_words(self) -> List[Word]:
@@ -96,7 +93,6 @@ class VocabularyDatabase:
                 SELECT id, english, chinese, folder, error_count
                 FROM words ORDER BY folder, english
             """)
-            
             return [Word(*row) for row in self.cursor.fetchall()]
         except sqlite3.Error:
             return []
@@ -108,7 +104,6 @@ class VocabularyDatabase:
                 SELECT id, english, chinese, folder, error_count
                 FROM words WHERE folder = ? ORDER BY english
             """, (folder.lower(),))
-            
             return [Word(*row) for row in self.cursor.fetchall()]
         except sqlite3.Error:
             return []
@@ -119,11 +114,9 @@ class VocabularyDatabase:
             search_pattern = f"%{keyword}%"
             self.cursor.execute("""
                 SELECT id, english, chinese, folder, error_count
-                FROM words
-                WHERE english LIKE ? OR chinese LIKE ?
+                FROM words WHERE english LIKE ? OR chinese LIKE ?
                 ORDER BY folder, english
             """, (search_pattern, search_pattern))
-            
             return [Word(*row) for row in self.cursor.fetchall()]
         except sqlite3.Error:
             return []
@@ -197,22 +190,36 @@ class VocabularyDatabase:
             self.connection.close()
 
 
-class VocabularyApp:
-    """主應用程式類別"""
+class ModernVocabApp:
+    """現代化單字背誦應用程式"""
+    
+    # 配色方案（參考提供的設計）
+    PRIMARY_BLUE = "#3B9DF2"
+    BG_LIGHT = "#F8FAFC"
+    WHITE = "#FFFFFF"
+    TEXT_DARK = "#1E293B"
+    SIDEBAR_TEXT = "#64748B"
+    BORDER = "#E2E8F0"
+    HOVER_BG = "#EEF6FF"
     
     def __init__(self, root):
         self.root = root
-        self.root.title("英文單字背誦系統 v2.0")
-        self.root.geometry("900x650")
+        self.root.title("VocabMaster - Dashboard")
         
-        # 設定樣式
-        self.setup_style()
+        # 設定視窗大小和位置
+        window_width = 1200
+        window_height = 700
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # 設定背景色
+        self.root.configure(bg=self.BG_LIGHT)
         
         # 初始化資料庫
         self.db = VocabularyDatabase()
-        
-        # 建立主介面
-        self.create_main_interface()
         
         # 測驗相關變數
         self.test_words = []
@@ -222,915 +229,1083 @@ class VocabularyApp:
         # 單字卡相關變數
         self.flashcard_words = []
         self.current_flashcard_index = 0
+        self.flashcard_flipped = False
         
-    def setup_style(self):
-        """設定視覺樣式"""
-        style = ttk.Style()
-        style.theme_use('clam')
+        # 設定字型
+        self.setup_fonts()
         
-        # 配色方案
-        bg_color = "#f5f5f5"
-        primary_color = "#4a90e2"
-        success_color = "#52c41a"
-        error_color = "#ff4d4f"
+        # 建立介面
+        self.create_interface()
         
-        # 設定按鈕樣式
-        style.configure('Primary.TButton',
-                       background=primary_color,
-                       foreground='white',
-                       padding=10,
-                       font=('Arial', 10, 'bold'))
-        
-        style.map('Primary.TButton',
-                 background=[('active', '#3a7bc8')])
-        
-        self.root.configure(bg=bg_color)
+        # 載入統計資訊
+        self.load_statistics()
     
-    def create_main_interface(self):
+    def setup_fonts(self):
+        """設定字型"""
+        self.font_title = font.Font(family="Arial", size=24, weight="bold")
+        self.font_heading = font.Font(family="Arial", size=16, weight="bold")
+        self.font_normal = font.Font(family="Arial", size=10)
+        self.font_large = font.Font(family="Arial", size=14)
+    
+    def create_interface(self):
         """建立主介面"""
-        # 標題
-        title_frame = tk.Frame(self.root, bg="#4a90e2", height=80)
-        title_frame.pack(fill="x")
-        title_frame.pack_propagate(False)
-        
-        title_label = tk.Label(
-            title_frame,
-            text="📚 英文單字背誦系統",
-            font=("Arial", 24, "bold"),
-            bg="#4a90e2",
-            fg="white"
-        )
-        title_label.pack(pady=20)
+        # 側邊欄
+        self.create_sidebar()
         
         # 主內容區
-        content_frame = tk.Frame(self.root, bg="#f5f5f5")
-        content_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        self.create_main_content()
         
-        # 左側選單
-        menu_frame = tk.Frame(content_frame, bg="white", width=200)
-        menu_frame.pack(side="left", fill="y", padx=(0, 20))
-        menu_frame.pack_propagate(False)
+        # 預設顯示 Dashboard
+        self.show_dashboard()
+    
+    def create_sidebar(self):
+        """建立側邊欄"""
+        sidebar = tk.Frame(self.root, bg=self.WHITE, width=240)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
         
-        # 選單標題
-        menu_title = tk.Label(
-            menu_frame,
-            text="功能選單",
+        # Logo
+        logo_frame = tk.Frame(sidebar, bg=self.WHITE)
+        logo_frame.pack(pady=24, padx=24)
+        
+        tk.Label(
+            logo_frame,
+            text="📚 VocabMaster",
             font=("Arial", 14, "bold"),
-            bg="white",
-            fg="#333"
-        )
-        menu_title.pack(pady=20)
+            bg=self.WHITE,
+            fg=self.PRIMARY_BLUE
+        ).pack()
         
-        # 選單按鈕
-        buttons = [
-            ("➕ 新增單字", self.show_add_word),
-            ("📖 單字卡學習", self.show_flashcard),
-            ("✏️ 開始測驗", self.show_test),
-            ("❌ 錯題本", self.show_error_list),
-            ("🔍 查詢單字", self.show_search),
-            ("📊 統計資訊", self.show_statistics),
-            ("🗑️ 管理單字", self.show_manage),
+        # 選單項目
+        menu_items = [
+            ("📊 Dashboard", "dashboard"),
+            ("➕ New Word", "add"),
+            ("📖 Flashcards", "flashcard"),
+            ("❓ Test", "test"),
+            ("⚠️ Wrong Answers", "errors"),
+            ("📈 Statistics", "stats"),
+            ("⚙️ Management", "manage"),
         ]
         
-        for text, command in buttons:
+        self.menu_buttons = {}
+        for text, page in menu_items:
             btn = tk.Button(
-                menu_frame,
+                sidebar,
                 text=text,
-                command=command,
-                width=18,
-                bg="#4a90e2",
-                fg="white",
-                font=("Arial", 10),
+                font=self.font_normal,
+                bg=self.WHITE,
+                fg=self.SIDEBAR_TEXT,
                 relief="flat",
+                anchor="w",
+                padx=24,
+                pady=12,
                 cursor="hand2",
-                pady=10
+                command=lambda p=page: self.navigate_to(p)
             )
-            btn.pack(pady=5, padx=10)
+            btn.pack(fill="x")
+            self.menu_buttons[page] = btn
             
             # 懸停效果
-            btn.bind("<Enter>", lambda e, b=btn: b.configure(bg="#3a7bc8"))
-            btn.bind("<Leave>", lambda e, b=btn: b.configure(bg="#4a90e2"))
+            btn.bind("<Enter>", lambda e, b=btn: self.on_menu_hover(b, True))
+            btn.bind("<Leave>", lambda e, b=btn: self.on_menu_hover(b, False))
         
-        # 右側內容區
-        self.content_area = tk.Frame(content_frame, bg="white")
-        self.content_area.pack(side="left", fill="both", expand=True)
+        # 用戶資訊
+        user_frame = tk.Frame(sidebar, bg=self.WHITE)
+        user_frame.pack(side="bottom", fill="x", pady=20, padx=24)
         
-        # 顯示歡迎畫面
-        self.show_welcome()
+        # 頭像
+        avatar = tk.Label(
+            user_frame,
+            text="JD",
+            font=("Arial", 10, "bold"),
+            bg="#DBEAFE",
+            fg=self.PRIMARY_BLUE,
+            width=3,
+            height=1
+        )
+        avatar.pack(side="left", padx=(0, 12))
+        
+        # 用戶名稱
+        user_info = tk.Frame(user_frame, bg=self.WHITE)
+        user_info.pack(side="left")
+        
+        tk.Label(
+            user_info,
+            text="John Doe",
+            font=("Arial", 9, "bold"),
+            bg=self.WHITE,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w")
+        
+        tk.Label(
+            user_info,
+            text="Free Account",
+            font=("Arial", 8),
+            bg=self.WHITE,
+            fg=self.SIDEBAR_TEXT
+        ).pack(anchor="w")
+    
+    def on_menu_hover(self, button, is_hover):
+        """選單懸停效果"""
+        if button.cget("bg") != self.HOVER_BG:  # 不是活動狀態
+            if is_hover:
+                button.configure(bg=self.HOVER_BG, fg=self.PRIMARY_BLUE)
+            else:
+                button.configure(bg=self.WHITE, fg=self.SIDEBAR_TEXT)
+    
+    def create_main_content(self):
+        """建立主內容區"""
+        self.main_frame = tk.Frame(self.root, bg=self.BG_LIGHT)
+        self.main_frame.pack(side="left", fill="both", expand=True, padx=40, pady=20)
+        
+        # 頂部導航
+        self.create_top_nav()
+        
+        # 內容容器
+        self.content_container = tk.Frame(self.main_frame, bg=self.BG_LIGHT)
+        self.content_container.pack(fill="both", expand=True)
+    
+    def create_top_nav(self):
+        """建立頂部導航"""
+        top_nav = tk.Frame(self.main_frame, bg=self.BG_LIGHT)
+        top_nav.pack(fill="x", pady=(0, 20))
+        
+        # 搜尋框
+        search_frame = tk.Frame(top_nav, bg="#F1F5F9")
+        search_frame.pack(side="left")
+        
+        tk.Label(
+            search_frame,
+            text="🔍",
+            bg="#F1F5F9",
+            fg=self.SIDEBAR_TEXT
+        ).pack(side="left", padx=(8, 4))
+        
+        self.search_entry = tk.Entry(
+            search_frame,
+            font=self.font_normal,
+            bg="#F1F5F9",
+            relief="flat",
+            width=25
+        )
+        self.search_entry.pack(side="left", padx=(0, 8), pady=8)
+        self.search_entry.insert(0, "Search words...")
+        
+        # 右側按鈕
+        btn_frame = tk.Frame(top_nav, bg=self.BG_LIGHT)
+        btn_frame.pack(side="right")
+        
+        add_btn = tk.Button(
+            btn_frame,
+            text="+ Add New",
+            font=("Arial", 9, "bold"),
+            bg=self.PRIMARY_BLUE,
+            fg="white",
+            relief="flat",
+            cursor="hand2",
+            padx=16,
+            pady=8,
+            command=lambda: self.navigate_to("add")
+        )
+        add_btn.pack()
     
     def clear_content(self):
         """清空內容區"""
-        for widget in self.content_area.winfo_children():
+        for widget in self.content_container.winfo_children():
             widget.destroy()
     
-    def show_welcome(self):
-        """顯示歡迎畫面"""
-        self.clear_content()
+    def navigate_to(self, page):
+        """導航到指定頁面"""
+        # 重置所有選單按鈕
+        for btn in self.menu_buttons.values():
+            btn.configure(bg=self.WHITE, fg=self.SIDEBAR_TEXT)
         
-        # 取得統計資訊
-        stats = self.db.get_statistics()
+        # 設定當前按鈕為活動狀態
+        if page in self.menu_buttons:
+            self.menu_buttons[page].configure(bg=self.HOVER_BG, fg=self.PRIMARY_BLUE)
         
-        welcome_text = f"""
-        
-        歡迎使用英文單字背誦系統！
-        
-        📚 目前共有 {stats.get('total_words', 0)} 個單字
-        📁 分布在 {stats.get('total_folders', 0)} 個資料夾
-        ❌ {stats.get('words_with_errors', 0)} 個單字有錯誤記錄
-        
-        請從左側選單選擇功能開始使用
-        """
-        
-        label = tk.Label(
-            self.content_area,
-            text=welcome_text,
-            font=("Arial", 14),
-            bg="white",
-            fg="#666",
-            justify="left"
-        )
-        label.pack(pady=100)
+        # 顯示對應頁面
+        if page == "dashboard":
+            self.show_dashboard()
+        elif page == "add":
+            self.show_add_word()
+        elif page == "flashcard":
+            self.show_flashcard_setup()
+        elif page == "test":
+            self.show_test_setup()
+        elif page == "errors":
+            self.show_errors()
+        elif page == "stats":
+            self.show_statistics()
+        elif page == "manage":
+            self.show_manage()
     
-    def show_add_word(self):
-        """顯示新增單字介面"""
+    def show_dashboard(self):
+        """顯示 Dashboard"""
         self.clear_content()
         
-        # 標題
-        title = tk.Label(
-            self.content_area,
-            text="➕ 新增單字",
-            font=("Arial", 18, "bold"),
-            bg="white",
-            fg="#333"
-        )
-        title.pack(pady=20)
+        # Hero Banner
+        hero = tk.Frame(self.content_container, bg=self.PRIMARY_BLUE)
+        hero.pack(fill="x", pady=(0, 24))
         
-        # 表單框架
-        form_frame = tk.Frame(self.content_area, bg="white")
-        form_frame.pack(pady=20)
-        
-        # 資料夾
-        tk.Label(form_frame, text="資料夾：", font=("Arial", 12), bg="white").grid(
-            row=0, column=0, sticky="w", pady=10, padx=10
-        )
-        folder_entry = tk.Entry(form_frame, font=("Arial", 12), width=30)
-        folder_entry.grid(row=0, column=1, pady=10, padx=10)
-        
-        # 英文單字
-        tk.Label(form_frame, text="英文單字：", font=("Arial", 12), bg="white").grid(
-            row=1, column=0, sticky="w", pady=10, padx=10
-        )
-        english_entry = tk.Entry(form_frame, font=("Arial", 12), width=30)
-        english_entry.grid(row=1, column=1, pady=10, padx=10)
-        
-        # 中文意思
-        tk.Label(form_frame, text="中文意思：", font=("Arial", 12), bg="white").grid(
-            row=2, column=0, sticky="w", pady=10, padx=10
-        )
-        chinese_entry = tk.Entry(form_frame, font=("Arial", 12), width=30)
-        chinese_entry.grid(row=2, column=1, pady=10, padx=10)
-        
-        # 結果顯示
-        result_label = tk.Label(
-            self.content_area,
-            text="",
-            font=("Arial", 11),
-            bg="white",
-            fg="#52c41a"
-        )
-        result_label.pack(pady=10)
-        
-        def add_word():
-            folder = folder_entry.get().strip()
-            english = english_entry.get().strip()
-            chinese = chinese_entry.get().strip()
-            
-            if not folder or not english or not chinese:
-                result_label.config(text="❌ 所有欄位都必須填寫！", fg="#ff4d4f")
-                return
-            
-            if self.db.add_word(english, chinese, folder):
-                result_label.config(
-                    text=f"✅ 成功新增：{english} - {chinese}",
-                    fg="#52c41a"
-                )
-                # 清空輸入框
-                english_entry.delete(0, tk.END)
-                chinese_entry.delete(0, tk.END)
-                english_entry.focus()
-            else:
-                result_label.config(
-                    text=f"⚠️ 單字已存在或新增失敗",
-                    fg="#ff4d4f"
-                )
-        
-        # 新增按鈕
-        add_btn = tk.Button(
-            self.content_area,
-            text="新增單字",
-            command=add_word,
-            bg="#52c41a",
-            fg="white",
-            font=("Arial", 12, "bold"),
-            relief="flat",
-            cursor="hand2",
-            padx=30,
-            pady=10
-        )
-        add_btn.pack(pady=20)
-        
-        # 按 Enter 也可以新增
-        chinese_entry.bind("<Return>", lambda e: add_word())
-    
-    def show_flashcard(self):
-        """顯示單字卡學習介面"""
-        self.clear_content()
-        
-        # 選擇資料夾
-        folders = self.db.get_all_folders()
-        
-        if not folders:
-            tk.Label(
-                self.content_area,
-                text="❌ 目前沒有任何單字\n請先新增單字",
-                font=("Arial", 14),
-                bg="white",
-                fg="#ff4d4f"
-            ).pack(pady=100)
-            return
-        
-        # 標題
-        title = tk.Label(
-            self.content_area,
-            text="📖 單字卡學習",
-            font=("Arial", 18, "bold"),
-            bg="white",
-            fg="#333"
-        )
-        title.pack(pady=20)
-        
-        # 選擇資料夾
-        select_frame = tk.Frame(self.content_area, bg="white")
-        select_frame.pack(pady=20)
+        hero_content = tk.Frame(hero, bg=self.PRIMARY_BLUE)
+        hero_content.pack(padx=40, pady=40)
         
         tk.Label(
-            select_frame,
-            text="選擇資料夾：",
-            font=("Arial", 12),
-            bg="white"
-        ).pack(side="left", padx=10)
+            hero_content,
+            text="Welcome back, Learner!",
+            font=("Arial", 22, "bold"),
+            bg=self.PRIMARY_BLUE,
+            fg="white"
+        ).pack(anchor="w")
         
-        folder_var = tk.StringVar()
-        folder_combo = ttk.Combobox(
-            select_frame,
-            textvariable=folder_var,
-            values=["全部單字"] + folders,
-            font=("Arial", 12),
-            state="readonly",
-            width=20
-        )
-        folder_combo.current(0)
-        folder_combo.pack(side="left", padx=10)
-        
-        def start_flashcard():
-            selected = folder_var.get()
-            
-            if selected == "全部單字":
-                self.flashcard_words = self.db.get_all_words()
-            else:
-                self.flashcard_words = self.db.get_words_by_folder(selected)
-            
-            if not self.flashcard_words:
-                messagebox.showwarning("警告", "沒有可學習的單字")
-                return
-            
-            random.shuffle(self.flashcard_words)
-            self.current_flashcard_index = 0
-            self.display_flashcard()
-        
-        start_btn = tk.Button(
-            select_frame,
-            text="開始學習",
-            command=start_flashcard,
-            bg="#4a90e2",
+        tk.Label(
+            hero_content,
+            text="Ready to master some new English words today?\nYou've already made great progress this week. Keep up the momentum!",
+            font=("Arial", 10),
+            bg=self.PRIMARY_BLUE,
             fg="white",
-            font=("Arial", 11, "bold"),
+            justify="left"
+        ).pack(anchor="w", pady=(12, 24))
+        
+        # Hero 按鈕
+        btn_frame = tk.Frame(hero_content, bg=self.PRIMARY_BLUE)
+        btn_frame.pack(anchor="w")
+        
+        tk.Button(
+            btn_frame,
+            text="Continue Lesson",
+            font=("Arial", 10, "bold"),
+            bg="white",
+            fg=self.PRIMARY_BLUE,
             relief="flat",
             cursor="hand2",
             padx=20,
-            pady=5
-        )
-        start_btn.pack(side="left", padx=10)
+            pady=10,
+            command=lambda: self.navigate_to("flashcard")
+        ).pack(side="left", padx=(0, 12))
+        
+        tk.Button(
+            btn_frame,
+            text="View Goals",
+            font=("Arial", 10, "bold"),
+            bg="#5BA8F5",  # 稍淺的藍色代替半透明效果
+            fg="white",
+            relief="flat",
+            cursor="hand2",
+            padx=20,
+            pady=10,
+            command=lambda: self.navigate_to("stats")
+        ).pack(side="left")
+        
+        # 統計卡片
+        self.create_stat_cards()
+        
+        # 快速動作
+        tk.Label(
+            self.content_container,
+            text="⚡ Quick Actions",
+            font=("Arial", 14, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w", pady=(32, 20))
+        
+        self.create_action_cards()
     
-    def display_flashcard(self):
-        """顯示單字卡內容"""
+    def create_stat_cards(self):
+        """建立統計卡片"""
+        stats_frame = tk.Frame(self.content_container, bg=self.BG_LIGHT)
+        stats_frame.pack(fill="x", pady=(0, 32))
+        
+        stats = self.db.get_statistics()
+        
+        cards_data = [
+            ("📄", "TOTAL WORDS", stats.get('total_words', 0), "#E0F2FE", "#0EA5E9"),
+            ("📁", "FOLDERS", stats.get('total_folders', 0), "#FFEDD5", "#F97316"),
+            ("🔄", "WRONG RECORDS", stats.get('words_with_errors', 0), "#FEE2E2", "#EF4444"),
+        ]
+        
+        for i, (icon, label, value, bg, fg) in enumerate(cards_data):
+            card = tk.Frame(stats_frame, bg=self.WHITE)
+            card.pack(side="left", fill="both", expand=True, padx=(0 if i == 0 else 10, 0))
+            
+            inner = tk.Frame(card, bg=self.WHITE)
+            inner.pack(padx=20, pady=20)
+            
+            # Icon
+            icon_label = tk.Label(
+                inner,
+                text=icon,
+                font=("Arial", 20),
+                bg=bg,
+                fg=fg,
+                width=2,
+                height=1
+            )
+            icon_label.pack(side="left", padx=(0, 16))
+            
+            # 文字
+            text_frame = tk.Frame(inner, bg=self.WHITE)
+            text_frame.pack(side="left")
+            
+            tk.Label(
+                text_frame,
+                text=label,
+                font=("Arial", 8),
+                bg=self.WHITE,
+                fg=self.SIDEBAR_TEXT
+            ).pack(anchor="w")
+            
+            tk.Label(
+                text_frame,
+                text=str(value),
+                font=("Arial", 20, "bold"),
+                bg=self.WHITE,
+                fg=self.TEXT_DARK
+            ).pack(anchor="w")
+    
+    def create_action_cards(self):
+        """建立動作卡片"""
+        actions_frame = tk.Frame(self.content_container, bg=self.BG_LIGHT)
+        actions_frame.pack(fill="both", expand=True)
+        
+        actions = [
+            ("➕", "New Word", "Expand your dictionary by adding new vocabulary.", self.WHITE, self.TEXT_DARK, "add"),
+            ("📖", "Flashcards", "Review your words using spaced repetition.", self.WHITE, self.TEXT_DARK, "flashcard"),
+            ("❓", "Start Test", "Challenge yourself with a quiz.", self.PRIMARY_BLUE, "white", "test"),
+        ]
+        
+        for i, (icon, title, desc, bg, fg, page) in enumerate(actions):
+            card = tk.Frame(actions_frame, bg=bg, cursor="hand2")
+            card.pack(side="left", fill="both", expand=True, padx=(0 if i == 0 else 20, 0))
+            card.bind("<Button-1>", lambda e, p=page: self.navigate_to(p))
+            
+            inner = tk.Frame(card, bg=bg)
+            inner.pack(padx=24, pady=30)
+            
+            # Icon
+            icon_bg = "#5BA8F5" if bg == self.PRIMARY_BLUE else "#F1F5F9"
+            icon_fg = "white" if bg == self.PRIMARY_BLUE else self.TEXT_DARK
+            
+            tk.Label(
+                inner,
+                text=icon,
+                font=("Arial", 16),
+                bg=bg,
+                fg=icon_fg,
+                width=2
+            ).pack(anchor="w", pady=(0, 12))
+            
+            tk.Label(
+                inner,
+                text=title,
+                font=("Arial", 12, "bold"),
+                bg=bg,
+                fg=fg
+            ).pack(anchor="w", pady=(0, 8))
+            
+            desc_fg = "#E0F2FE" if bg == self.PRIMARY_BLUE else self.SIDEBAR_TEXT
+            tk.Label(
+                inner,
+                text=desc,
+                font=("Arial", 9),
+                bg=bg,
+                fg=desc_fg,
+                wraplength=200,
+                justify="left"
+            ).pack(anchor="w")
+    
+    def show_add_word(self):
+        """顯示新增單字頁面"""
+        self.clear_content()
+        
+        # 標題
+        tk.Label(
+            self.content_container,
+            text="➕ Add New Word",
+            font=("Arial", 20, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w", pady=(0, 8))
+        
+        tk.Label(
+            self.content_container,
+            text="Expand your vocabulary library",
+            font=("Arial", 10),
+            bg=self.BG_LIGHT,
+            fg=self.SIDEBAR_TEXT
+        ).pack(anchor="w", pady=(0, 32))
+        
+        # 表單卡片
+        form_card = tk.Frame(self.content_container, bg=self.WHITE)
+        form_card.pack(fill="both", expand=True, pady=(0, 20))
+        
+        form_inner = tk.Frame(form_card, bg=self.WHITE)
+        form_inner.pack(padx=40, pady=40, fill="both", expand=True)
+        
+        # 表單欄位
+        fields = [
+            ("Folder", "folder"),
+            ("English Word", "english"),
+            ("Chinese Meaning", "chinese"),
+        ]
+        
+        entries = {}
+        for label_text, field_name in fields:
+            field_frame = tk.Frame(form_inner, bg=self.WHITE)
+            field_frame.pack(fill="x", pady=(0, 20))
+            
+            tk.Label(
+                field_frame,
+                text=label_text,
+                font=("Arial", 10, "bold"),
+                bg=self.WHITE,
+                fg=self.TEXT_DARK
+            ).pack(anchor="w", pady=(0, 8))
+            
+            entry = tk.Entry(
+                field_frame,
+                font=("Arial", 11),
+                relief="solid",
+                borderwidth=1
+            )
+            entry.pack(fill="x", ipady=8)
+            entries[field_name] = entry
+        
+        # 結果訊息
+        self.add_result_label = tk.Label(
+            form_inner,
+            text="",
+            font=("Arial", 10),
+            bg=self.WHITE
+        )
+        self.add_result_label.pack(pady=(0, 20))
+        
+        # 提交按鈕
+        def submit():
+            folder = entries["folder"].get().strip()
+            english = entries["english"].get().strip()
+            chinese = entries["chinese"].get().strip()
+            
+            if not folder or not english or not chinese:
+                self.add_result_label.config(
+                    text="❌ All fields are required!",
+                    fg="#EF4444"
+                )
+                return
+            
+            if self.db.add_word(english, chinese, folder):
+                self.add_result_label.config(
+                    text=f"✅ Successfully added: {english}",
+                    fg="#10B981"
+                )
+                entries["english"].delete(0, tk.END)
+                entries["chinese"].delete(0, tk.END)
+                entries["english"].focus()
+                self.load_statistics()
+            else:
+                self.add_result_label.config(
+                    text="⚠️ Word already exists!",
+                    fg="#F97316"
+                )
+        
+        tk.Button(
+            form_inner,
+            text="Add Word",
+            font=("Arial", 11, "bold"),
+            bg=self.PRIMARY_BLUE,
+            fg="white",
+            relief="flat",
+            cursor="hand2",
+            command=submit,
+            pady=12
+        ).pack(fill="x")
+        
+        entries["chinese"].bind("<Return>", lambda e: submit())
+    
+    def show_flashcard_setup(self):
+        """顯示單字卡設定頁面"""
+        self.clear_content()
+        
+        tk.Label(
+            self.content_container,
+            text="📖 Flashcard Learning",
+            font=("Arial", 20, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w", pady=(0, 32))
+        
+        # 選擇框
+        select_card = tk.Frame(self.content_container, bg=self.WHITE)
+        select_card.pack(fill="x", pady=(0, 20))
+        
+        inner = tk.Frame(select_card, bg=self.WHITE)
+        inner.pack(padx=40, pady=40)
+        
+        tk.Label(
+            inner,
+            text="Select Folder",
+            font=("Arial", 10, "bold"),
+            bg=self.WHITE,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w", pady=(0, 12))
+        
+        self.flashcard_folder_var = tk.StringVar()
+        folders = ["All Words"] + self.db.get_all_folders()
+        
+        folder_menu = ttk.Combobox(
+            inner,
+            textvariable=self.flashcard_folder_var,
+            values=folders,
+            font=("Arial", 11),
+            state="readonly"
+        )
+        folder_menu.pack(fill="x", pady=(0, 20))
+        if folders:
+            folder_menu.current(0)
+        
+        tk.Button(
+            inner,
+            text="Start Learning",
+            font=("Arial", 11, "bold"),
+            bg=self.PRIMARY_BLUE,
+            fg="white",
+            relief="flat",
+            cursor="hand2",
+            command=self.start_flashcard,
+            pady=12
+        ).pack(fill="x")
+    
+    def start_flashcard(self):
+        """開始單字卡學習"""
+        folder = self.flashcard_folder_var.get()
+        
+        if folder == "All Words":
+            self.flashcard_words = self.db.get_all_words()
+        else:
+            self.flashcard_words = self.db.get_words_by_folder(folder)
+        
+        if not self.flashcard_words:
+            messagebox.showwarning("Warning", "No words available for learning")
+            return
+        
+        random.shuffle(self.flashcard_words)
+        self.current_flashcard_index = 0
+        self.flashcard_flipped = False
+        
+        self.show_flashcard()
+    
+    def show_flashcard(self):
+        """顯示單字卡"""
         self.clear_content()
         
         if self.current_flashcard_index >= len(self.flashcard_words):
-            # 學習完成
-            tk.Label(
-                self.content_area,
-                text="🎉 恭喜！\n\n已完成所有單字學習",
-                font=("Arial", 16, "bold"),
-                bg="white",
-                fg="#52c41a"
-            ).pack(pady=100)
-            
-            tk.Button(
-                self.content_area,
-                text="返回",
-                command=self.show_flashcard,
-                bg="#4a90e2",
-                fg="white",
-                font=("Arial", 12),
-                relief="flat",
-                cursor="hand2",
-                padx=30,
-                pady=10
-            ).pack()
+            self.show_flashcard_complete()
             return
         
         word = self.flashcard_words[self.current_flashcard_index]
         
         # 進度
-        progress_text = f"📊 進度：{self.current_flashcard_index + 1} / {len(self.flashcard_words)}"
+        progress = (self.current_flashcard_index + 1) / len(self.flashcard_words)
+        
         tk.Label(
-            self.content_area,
-            text=progress_text,
-            font=("Arial", 12),
-            bg="white",
-            fg="#666"
-        ).pack(pady=20)
+            self.content_container,
+            text=f"Card {self.current_flashcard_index + 1} / {len(self.flashcard_words)}",
+            font=("Arial", 10),
+            bg=self.BG_LIGHT,
+            fg=self.SIDEBAR_TEXT
+        ).pack(anchor="w", pady=(0, 20))
         
-        # 單字卡片
-        card_frame = tk.Frame(
-            self.content_area,
-            bg="#f0f8ff",
-            relief="raised",
-            borderwidth=2
-        )
-        card_frame.pack(pady=30, padx=50, fill="both", expand=True)
+        # 卡片
+        card = tk.Frame(self.content_container, bg=self.PRIMARY_BLUE)
+        card.pack(fill="both", expand=True, pady=(0, 20))
         
-        # 英文
-        english_label = tk.Label(
-            card_frame,
-            text=word.english,
+        self.card_label = tk.Label(
+            card,
+            text=word.english.upper(),
             font=("Arial", 36, "bold"),
-            bg="#f0f8ff",
-            fg="#333"
+            bg=self.PRIMARY_BLUE,
+            fg="white"
         )
-        english_label.pack(pady=40)
+        self.card_label.pack(expand=True)
         
-        # 中文（初始隱藏）
-        chinese_label = tk.Label(
-            card_frame,
-            text="",
-            font=("Arial", 24),
-            bg="#f0f8ff",
-            fg="#666"
-        )
-        chinese_label.pack(pady=20)
+        # 按鈕
+        btn_frame = tk.Frame(self.content_container, bg=self.BG_LIGHT)
+        btn_frame.pack()
         
-        # 顯示/隱藏中文的函數
-        shown = [False]
-        
-        def toggle_chinese():
-            if not shown[0]:
-                chinese_label.config(text=word.chinese)
-                show_btn.config(text="隱藏中文")
-                shown[0] = True
+        def flip_card():
+            if self.flashcard_flipped:
+                self.card_label.config(text=word.english.upper())
             else:
-                chinese_label.config(text="")
-                show_btn.config(text="顯示中文")
-                shown[0] = False
+                self.card_label.config(text=word.chinese)
+            self.flashcard_flipped = not self.flashcard_flipped
         
-        # 顯示中文按鈕
-        show_btn = tk.Button(
-            self.content_area,
-            text="顯示中文",
-            command=toggle_chinese,
-            bg="#ffa500",
-            fg="white",
-            font=("Arial", 12, "bold"),
-            relief="flat",
-            cursor="hand2",
-            padx=30,
-            pady=10
-        )
-        show_btn.pack(pady=10)
-        
-        # 下一張按鈕
         def next_card():
             self.current_flashcard_index += 1
-            self.display_flashcard()
+            self.flashcard_flipped = False
+            self.show_flashcard()
         
-        next_btn = tk.Button(
-            self.content_area,
-            text="下一張 →",
-            command=next_card,
-            bg="#4a90e2",
+        tk.Button(
+            btn_frame,
+            text="Flip Card",
+            font=("Arial", 11, "bold"),
+            bg="#F97316",
             fg="white",
-            font=("Arial", 12, "bold"),
             relief="flat",
             cursor="hand2",
+            command=flip_card,
             padx=30,
-            pady=10
-        )
-        next_btn.pack(pady=10)
+            pady=12
+        ).pack(side="left", padx=(0, 12))
+        
+        tk.Button(
+            btn_frame,
+            text="Next →",
+            font=("Arial", 11, "bold"),
+            bg=self.PRIMARY_BLUE,
+            fg="white",
+            relief="flat",
+            cursor="hand2",
+            command=next_card,
+            padx=30,
+            pady=12
+        ).pack(side="left")
     
-    def show_test(self):
-        """顯示測驗介面"""
+    def show_flashcard_complete(self):
+        """顯示學習完成"""
         self.clear_content()
         
-        folders = self.db.get_all_folders()
-        
-        if not folders:
-            tk.Label(
-                self.content_area,
-                text="❌ 目前沒有任何單字\n請先新增單字",
-                font=("Arial", 14),
-                bg="white",
-                fg="#ff4d4f"
-            ).pack(pady=100)
-            return
-        
-        # 標題
-        title = tk.Label(
-            self.content_area,
-            text="✏️ 開始測驗",
-            font=("Arial", 18, "bold"),
-            bg="white",
-            fg="#333"
-        )
-        title.pack(pady=20)
-        
-        # 選擇資料夾
-        select_frame = tk.Frame(self.content_area, bg="white")
-        select_frame.pack(pady=20)
+        complete_frame = tk.Frame(self.content_container, bg=self.BG_LIGHT)
+        complete_frame.pack(expand=True)
         
         tk.Label(
-            select_frame,
-            text="選擇資料夾：",
-            font=("Arial", 12),
-            bg="white"
-        ).pack(side="left", padx=10)
+            complete_frame,
+            text="🎉",
+            font=("Arial", 60),
+            bg=self.BG_LIGHT
+        ).pack()
         
-        folder_var = tk.StringVar()
-        folder_combo = ttk.Combobox(
-            select_frame,
-            textvariable=folder_var,
-            values=["全部單字"] + folders,
-            font=("Arial", 12),
-            state="readonly",
-            width=20
-        )
-        folder_combo.current(0)
-        folder_combo.pack(side="left", padx=10)
+        tk.Label(
+            complete_frame,
+            text="Learning Complete!",
+            font=("Arial", 24, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.TEXT_DARK
+        ).pack(pady=20)
         
-        def start_test():
-            selected = folder_var.get()
-            
-            if selected == "全部單字":
-                self.test_words = self.db.get_all_words()
-            else:
-                self.test_words = self.db.get_words_by_folder(selected)
-            
-            if not self.test_words:
-                messagebox.showwarning("警告", "沒有可測驗的單字")
-                return
-            
-            random.shuffle(self.test_words)
-            self.current_test_index = 0
-            self.test_score = 0
-            self.display_test_question()
-        
-        start_btn = tk.Button(
-            select_frame,
-            text="開始測驗",
-            command=start_test,
-            bg="#52c41a",
-            fg="white",
+        tk.Button(
+            complete_frame,
+            text="Back to Dashboard",
             font=("Arial", 11, "bold"),
+            bg=self.PRIMARY_BLUE,
+            fg="white",
             relief="flat",
             cursor="hand2",
-            padx=20,
-            pady=5
-        )
-        start_btn.pack(side="left", padx=10)
+            command=lambda: self.navigate_to("dashboard"),
+            padx=30,
+            pady=12
+        ).pack()
     
-    def display_test_question(self):
+    def show_test_setup(self):
+        """顯示測驗設定"""
+        self.clear_content()
+        
+        tk.Label(
+            self.content_container,
+            text="❓ Start Test",
+            font=("Arial", 20, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w", pady=(0, 32))
+        
+        select_card = tk.Frame(self.content_container, bg=self.WHITE)
+        select_card.pack(fill="x")
+        
+        inner = tk.Frame(select_card, bg=self.WHITE)
+        inner.pack(padx=40, pady=40)
+        
+        tk.Label(
+            inner,
+            text="Select Folder",
+            font=("Arial", 10, "bold"),
+            bg=self.WHITE,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w", pady=(0, 12))
+        
+        self.test_folder_var = tk.StringVar()
+        folders = ["All Words"] + self.db.get_all_folders()
+        
+        folder_menu = ttk.Combobox(
+            inner,
+            textvariable=self.test_folder_var,
+            values=folders,
+            font=("Arial", 11),
+            state="readonly"
+        )
+        folder_menu.pack(fill="x", pady=(0, 20))
+        if folders:
+            folder_menu.current(0)
+        
+        tk.Button(
+            inner,
+            text="Start Test",
+            font=("Arial", 11, "bold"),
+            bg="#10B981",
+            fg="white",
+            relief="flat",
+            cursor="hand2",
+            command=self.start_test,
+            pady=12
+        ).pack(fill="x")
+    
+    def start_test(self):
+        """開始測驗"""
+        folder = self.test_folder_var.get()
+        
+        if folder == "All Words":
+            self.test_words = self.db.get_all_words()
+        else:
+            self.test_words = self.db.get_words_by_folder(folder)
+        
+        if not self.test_words:
+            messagebox.showwarning("Warning", "No words available for testing")
+            return
+        
+        random.shuffle(self.test_words)
+        self.current_test_index = 0
+        self.test_score = 0
+        
+        self.show_test_question()
+    
+    def show_test_question(self):
         """顯示測驗題目"""
         self.clear_content()
         
         if self.current_test_index >= len(self.test_words):
-            # 測驗完成
-            percentage = (self.test_score / len(self.test_words)) * 100
-            
-            result_text = f"測驗完成！\n\n得分：{self.test_score} / {len(self.test_words)}\n正確率：{percentage:.1f}%"
-            
-            tk.Label(
-                self.content_area,
-                text=result_text,
-                font=("Arial", 16, "bold"),
-                bg="white",
-                fg="#52c41a" if percentage >= 80 else "#ff4d4f"
-            ).pack(pady=100)
-            
-            tk.Button(
-                self.content_area,
-                text="返回",
-                command=self.show_test,
-                bg="#4a90e2",
-                fg="white",
-                font=("Arial", 12),
-                relief="flat",
-                cursor="hand2",
-                padx=30,
-                pady=10
-            ).pack()
+            self.show_test_complete()
             return
         
         word = self.test_words[self.current_test_index]
         
-        # 進度
-        progress_text = f"📝 題目：{self.current_test_index + 1} / {len(self.test_words)}　　得分：{self.test_score}"
-        tk.Label(
-            self.content_area,
-            text=progress_text,
-            font=("Arial", 12),
-            bg="white",
-            fg="#666"
-        ).pack(pady=20)
+        # 進度和得分
+        header = tk.Frame(self.content_container, bg=self.WHITE)
+        header.pack(fill="x", pady=(0, 20))
         
-        # 題目
-        question_frame = tk.Frame(self.content_area, bg="white")
-        question_frame.pack(pady=30)
+        inner = tk.Frame(header, bg=self.WHITE)
+        inner.pack(padx=20, pady=20)
         
         tk.Label(
-            question_frame,
+            inner,
+            text=f"Question {self.current_test_index + 1} / {len(self.test_words)}",
+            font=("Arial", 10),
+            bg=self.WHITE,
+            fg=self.SIDEBAR_TEXT
+        ).pack(side="left")
+        
+        tk.Label(
+            inner,
+            text=f"Score: {self.test_score}",
+            font=("Arial", 12, "bold"),
+            bg=self.WHITE,
+            fg=self.PRIMARY_BLUE
+        ).pack(side="right")
+        
+        # 題目卡片
+        question_card = tk.Frame(self.content_container, bg=self.WHITE)
+        question_card.pack(fill="both", expand=True, pady=(0, 20))
+        
+        q_inner = tk.Frame(question_card, bg=self.WHITE)
+        q_inner.pack(padx=40, pady=60)
+        
+        tk.Label(
+            q_inner,
             text=word.chinese,
             font=("Arial", 28, "bold"),
-            bg="white",
-            fg="#333"
-        ).pack()
+            bg=self.WHITE,
+            fg=self.TEXT_DARK
+        ).pack(pady=(0, 30))
         
-        # 答案輸入
-        answer_entry = tk.Entry(
-            self.content_area,
-            font=("Arial", 18),
-            width=25,
-            justify="center"
+        self.answer_entry = tk.Entry(
+            q_inner,
+            font=("Arial", 14),
+            justify="center",
+            relief="solid",
+            borderwidth=2
         )
-        answer_entry.pack(pady=20)
-        answer_entry.focus()
+        self.answer_entry.pack(fill="x", ipady=10, pady=(0, 20))
+        self.answer_entry.focus()
         
-        # 結果顯示
-        result_label = tk.Label(
-            self.content_area,
+        self.test_result_label = tk.Label(
+            q_inner,
             text="",
-            font=("Arial", 14, "bold"),
-            bg="white"
+            font=("Arial", 12, "bold"),
+            bg=self.WHITE
         )
-        result_label.pack(pady=10)
+        self.test_result_label.pack(pady=(0, 20))
         
-        def check_answer():
-            answer = answer_entry.get().strip().lower()
+        def check():
+            answer = self.answer_entry.get().strip().lower()
+            
+            if not answer:
+                return
             
             if answer == word.english:
                 self.test_score += 1
-                result_label.config(text=f"✅ 正確！", fg="#52c41a")
+                self.test_result_label.config(text="✅ Correct!", fg="#10B981")
             else:
                 word.error_count += 1
                 self.db.update_error_count(word.id, word.error_count)
-                result_label.config(
-                    text=f"❌ 錯誤！正確答案：{word.english}",
-                    fg="#ff4d4f"
+                self.test_result_label.config(
+                    text=f"❌ Wrong! Answer: {word.english}",
+                    fg="#EF4444"
                 )
             
-            # 1秒後自動下一題
-            self.root.after(1500, next_question)
+            self.root.after(1500, self.next_question)
         
-        def next_question():
-            self.current_test_index += 1
-            self.display_test_question()
-        
-        # 提交按鈕
-        submit_btn = tk.Button(
-            self.content_area,
-            text="提交答案",
-            command=check_answer,
-            bg="#4a90e2",
+        tk.Button(
+            q_inner,
+            text="Submit Answer",
+            font=("Arial", 11, "bold"),
+            bg="#10B981",
             fg="white",
-            font=("Arial", 12, "bold"),
             relief="flat",
             cursor="hand2",
-            padx=30,
-            pady=10
-        )
-        submit_btn.pack(pady=10)
+            command=check,
+            pady=12
+        ).pack(fill="x")
         
-        # 按 Enter 提交
-        answer_entry.bind("<Return>", lambda e: check_answer())
+        self.answer_entry.bind("<Return>", lambda e: check())
     
-    def show_error_list(self):
+    def next_question(self):
+        """下一題"""
+        self.current_test_index += 1
+        self.show_test_question()
+    
+    def show_test_complete(self):
+        """顯示測驗完成"""
+        self.clear_content()
+        
+        percentage = (self.test_score / len(self.test_words)) * 100
+        
+        complete_frame = tk.Frame(self.content_container, bg=self.BG_LIGHT)
+        complete_frame.pack(expand=True)
+        
+        tk.Label(
+            complete_frame,
+            text="🎉",
+            font=("Arial", 60),
+            bg=self.BG_LIGHT
+        ).pack()
+        
+        tk.Label(
+            complete_frame,
+            text="Test Complete!",
+            font=("Arial", 24, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.TEXT_DARK
+        ).pack(pady=20)
+        
+        tk.Label(
+            complete_frame,
+            text=f"{self.test_score} / {len(self.test_words)} ({percentage:.1f}%)",
+            font=("Arial", 32, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.PRIMARY_BLUE if percentage >= 80 else "#EF4444"
+        ).pack(pady=20)
+        
+        tk.Button(
+            complete_frame,
+            text="Back to Dashboard",
+            font=("Arial", 11, "bold"),
+            bg=self.PRIMARY_BLUE,
+            fg="white",
+            relief="flat",
+            cursor="hand2",
+            command=lambda: self.navigate_to("dashboard"),
+            padx=30,
+            pady=12
+        ).pack()
+        
+        self.load_statistics()
+    
+    def show_errors(self):
         """顯示錯題本"""
         self.clear_content()
         
-        error_words = self.db.get_error_words()
+        tk.Label(
+            self.content_container,
+            text="⚠️ Wrong Answers",
+            font=("Arial", 20, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w", pady=(0, 32))
         
-        # 標題
-        title = tk.Label(
-            self.content_area,
-            text="❌ 錯題本",
-            font=("Arial", 18, "bold"),
-            bg="white",
-            fg="#333"
-        )
-        title.pack(pady=20)
+        errors = self.db.get_error_words()
         
-        if not error_words:
+        if not errors:
+            complete_frame = tk.Frame(self.content_container, bg=self.BG_LIGHT)
+            complete_frame.pack(expand=True)
+            
             tk.Label(
-                self.content_area,
-                text="🎉 太棒了！\n\n目前沒有錯誤記錄",
-                font=("Arial", 14),
-                bg="white",
-                fg="#52c41a"
-            ).pack(pady=100)
+                complete_frame,
+                text="🎉",
+                font=("Arial", 60),
+                bg=self.BG_LIGHT
+            ).pack()
+            
+            tk.Label(
+                complete_frame,
+                text="No wrong records!",
+                font=("Arial", 20, "bold"),
+                bg=self.BG_LIGHT,
+                fg="#10B981"
+            ).pack(pady=20)
             return
         
-        # 建立表格
-        table_frame = tk.Frame(self.content_area, bg="white")
-        table_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        # 錯題列表
+        list_card = tk.Frame(self.content_container, bg=self.WHITE)
+        list_card.pack(fill="both", expand=True)
         
-        # 建立Treeview
-        columns = ("排名", "英文", "中文", "錯誤次數")
-        tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+        # 建立 Treeview
+        tree_frame = tk.Frame(list_card, bg=self.WHITE)
+        tree_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        # 設定欄位
-        tree.heading("排名", text="排名")
-        tree.heading("英文", text="英文")
-        tree.heading("中文", text="中文")
-        tree.heading("錯誤次數", text="錯誤次數")
+        columns = ("Rank", "English", "Chinese", "Folder", "Errors")
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=15)
         
-        tree.column("排名", width=60, anchor="center")
-        tree.column("英文", width=150, anchor="w")
-        tree.column("中文", width=200, anchor="w")
-        tree.column("錯誤次數", width=100, anchor="center")
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, anchor="center" if col in ["Rank", "Errors"] else "w")
         
-        # 加入資料
-        for i, word in enumerate(error_words, 1):
-            tree.insert("", "end", values=(i, word.english, word.chinese, word.error_count))
+        for i, word in enumerate(errors, 1):
+            tree.insert("", "end", values=(
+                i, word.english, word.chinese, word.folder, word.error_count
+            ))
         
         tree.pack(side="left", fill="both", expand=True)
         
-        # 捲軸
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
         scrollbar.pack(side="right", fill="y")
         tree.configure(yscrollcommand=scrollbar.set)
-    
-    def show_search(self):
-        """顯示查詢介面"""
-        self.clear_content()
-        
-        # 標題
-        title = tk.Label(
-            self.content_area,
-            text="🔍 查詢單字",
-            font=("Arial", 18, "bold"),
-            bg="white",
-            fg="#333"
-        )
-        title.pack(pady=20)
-        
-        # 搜尋框
-        search_frame = tk.Frame(self.content_area, bg="white")
-        search_frame.pack(pady=20)
-        
-        search_entry = tk.Entry(search_frame, font=("Arial", 14), width=30)
-        search_entry.pack(side="left", padx=10)
-        search_entry.focus()
-        
-        # 結果顯示區
-        result_frame = tk.Frame(self.content_area, bg="white")
-        result_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
-        def do_search():
-            keyword = search_entry.get().strip()
-            
-            if not keyword:
-                return
-            
-            # 清空結果區
-            for widget in result_frame.winfo_children():
-                widget.destroy()
-            
-            results = self.db.search_words(keyword)
-            
-            if not results:
-                tk.Label(
-                    result_frame,
-                    text="❌ 查無結果",
-                    font=("Arial", 12),
-                    bg="white",
-                    fg="#ff4d4f"
-                ).pack(pady=20)
-                return
-            
-            # 建立表格
-            columns = ("英文", "中文", "資料夾", "錯誤次數")
-            tree = ttk.Treeview(result_frame, columns=columns, show="headings", height=15)
-            
-            tree.heading("英文", text="英文")
-            tree.heading("中文", text="中文")
-            tree.heading("資料夾", text="資料夾")
-            tree.heading("錯誤次數", text="錯誤次數")
-            
-            tree.column("英文", width=150, anchor="w")
-            tree.column("中文", width=200, anchor="w")
-            tree.column("資料夾", width=120, anchor="w")
-            tree.column("錯誤次數", width=100, anchor="center")
-            
-            for word in results:
-                tree.insert("", "end", values=(
-                    word.english, word.chinese, word.folder, word.error_count
-                ))
-            
-            tree.pack(fill="both", expand=True)
-            
-            # 結果數量
-            tk.Label(
-                result_frame,
-                text=f"找到 {len(results)} 筆結果",
-                font=("Arial", 11),
-                bg="white",
-                fg="#666"
-            ).pack(pady=10)
-        
-        search_btn = tk.Button(
-            search_frame,
-            text="搜尋",
-            command=do_search,
-            bg="#4a90e2",
-            fg="white",
-            font=("Arial", 11, "bold"),
-            relief="flat",
-            cursor="hand2",
-            padx=20,
-            pady=5
-        )
-        search_btn.pack(side="left", padx=10)
-        
-        search_entry.bind("<Return>", lambda e: do_search())
     
     def show_statistics(self):
         """顯示統計資訊"""
         self.clear_content()
         
+        tk.Label(
+            self.content_container,
+            text="📈 Statistics",
+            font=("Arial", 20, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w", pady=(0, 32))
+        
         stats = self.db.get_statistics()
         
-        # 標題
-        title = tk.Label(
-            self.content_area,
-            text="📊 統計資訊",
-            font=("Arial", 18, "bold"),
-            bg="white",
-            fg="#333"
-        )
-        title.pack(pady=20)
-        
-        # 統計卡片
-        stats_frame = tk.Frame(self.content_area, bg="white")
-        stats_frame.pack(pady=20)
-        
-        def create_stat_card(parent, title, value, icon, color):
-            card = tk.Frame(parent, bg=color, relief="raised", borderwidth=2)
-            card.pack(side="left", padx=20, pady=10)
-            
-            tk.Label(
-                card,
-                text=icon,
-                font=("Arial", 30),
-                bg=color,
-                fg="white"
-            ).pack(pady=10)
-            
-            tk.Label(
-                card,
-                text=str(value),
-                font=("Arial", 24, "bold"),
-                bg=color,
-                fg="white"
-            ).pack()
-            
-            tk.Label(
-                card,
-                text=title,
-                font=("Arial", 12),
-                bg=color,
-                fg="white"
-            ).pack(pady=10, padx=30)
-        
-        create_stat_card(stats_frame, "總單字數", stats.get('total_words', 0), "📚", "#4a90e2")
-        create_stat_card(stats_frame, "資料夾數", stats.get('total_folders', 0), "📁", "#52c41a")
-        create_stat_card(stats_frame, "錯誤單字", stats.get('words_with_errors', 0), "❌", "#ff4d4f")
+        # 使用與 dashboard 相同的統計卡片
+        self.create_stat_cards()
     
     def show_manage(self):
-        """顯示管理介面"""
+        """顯示管理頁面"""
         self.clear_content()
         
-        # 標題
-        title = tk.Label(
-            self.content_area,
-            text="🗑️ 管理單字",
-            font=("Arial", 18, "bold"),
-            bg="white",
-            fg="#333"
-        )
-        title.pack(pady=20)
+        tk.Label(
+            self.content_container,
+            text="⚙️ Management",
+            font=("Arial", 20, "bold"),
+            bg=self.BG_LIGHT,
+            fg=self.TEXT_DARK
+        ).pack(anchor="w", pady=(0, 32))
         
         # 搜尋框
-        search_frame = tk.Frame(self.content_area, bg="white")
-        search_frame.pack(pady=20)
+        search_card = tk.Frame(self.content_container, bg=self.WHITE)
+        search_card.pack(fill="x", pady=(0, 20))
         
-        search_entry = tk.Entry(search_frame, font=("Arial", 12), width=30)
-        search_entry.pack(side="left", padx=10)
+        inner = tk.Frame(search_card, bg=self.WHITE)
+        inner.pack(padx=20, pady=20)
         
-        # 結果顯示
-        result_frame = tk.Frame(self.content_area, bg="white")
-        result_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        search_entry = tk.Entry(
+            inner,
+            font=("Arial", 11),
+            relief="solid",
+            borderwidth=1
+        )
+        search_entry.pack(side="left", fill="x", expand=True, ipady=8)
         
-        def search_and_display():
+        def do_search():
             keyword = search_entry.get().strip()
-            
             if not keyword:
                 return
             
-            for widget in result_frame.winfo_children():
-                widget.destroy()
-            
             results = self.db.search_words(keyword)
+            
+            # 清空結果區
+            for widget in result_container.winfo_children():
+                widget.destroy()
             
             if not results:
                 tk.Label(
-                    result_frame,
-                    text="❌ 查無結果",
+                    result_container,
+                    text="No results found",
                     font=("Arial", 12),
-                    bg="white",
-                    fg="#ff4d4f"
-                ).pack(pady=20)
+                    bg=self.BG_LIGHT,
+                    fg=self.SIDEBAR_TEXT
+                ).pack(pady=40)
                 return
             
-            # 顯示結果
             for word in results:
-                word_frame = tk.Frame(result_frame, bg="#f5f5f5", relief="raised", borderwidth=1)
-                word_frame.pack(fill="x", pady=5, padx=10)
+                item = tk.Frame(result_container, bg=self.WHITE)
+                item.pack(fill="x", pady=5)
                 
-                info_text = f"{word.english} - {word.chinese} ({word.folder})"
                 tk.Label(
-                    word_frame,
-                    text=info_text,
-                    font=("Arial", 11),
-                    bg="#f5f5f5",
-                    anchor="w"
-                ).pack(side="left", padx=10, pady=5)
+                    item,
+                    text=f"{word.english} - {word.chinese} ({word.folder})",
+                    font=("Arial", 10),
+                    bg=self.WHITE,
+                    fg=self.TEXT_DARK
+                ).pack(side="left", padx=20, pady=10)
                 
-                def delete_word(w=word):
-                    if messagebox.askyesno("確認", f"確定要刪除 '{w.english}' 嗎？"):
-                        if self.db.delete_word(w.id):
-                            messagebox.showinfo("成功", "已刪除單字")
-                            search_and_display()
-                        else:
-                            messagebox.showerror("錯誤", "刪除失敗")
+                def delete_word(wid=word.id):
+                    if messagebox.askyesno("Confirm", "Delete this word?"):
+                        if self.db.delete_word(wid):
+                            do_search()
+                            self.load_statistics()
                 
-                delete_btn = tk.Button(
-                    word_frame,
-                    text="刪除",
-                    command=delete_word,
-                    bg="#ff4d4f",
-                    fg="white",
+                tk.Button(
+                    item,
+                    text="Delete",
                     font=("Arial", 9),
+                    bg="#EF4444",
+                    fg="white",
                     relief="flat",
                     cursor="hand2",
+                    command=delete_word,
                     padx=15,
-                    pady=3
-                )
-                delete_btn.pack(side="right", padx=10)
+                    pady=5
+                ).pack(side="right", padx=20)
         
-        search_btn = tk.Button(
-            search_frame,
-            text="搜尋",
-            command=search_and_display,
-            bg="#4a90e2",
+        tk.Button(
+            inner,
+            text="Search",
+            font=("Arial", 10, "bold"),
+            bg=self.PRIMARY_BLUE,
             fg="white",
-            font=("Arial", 11),
             relief="flat",
             cursor="hand2",
+            command=do_search,
             padx=20,
-            pady=5
-        )
-        search_btn.pack(side="left")
+            pady=8
+        ).pack(side="left", padx=(12, 0))
         
-        search_entry.bind("<Return>", lambda e: search_and_display())
+        search_entry.bind("<Return>", lambda e: do_search())
+        
+        # 結果容器
+        result_container = tk.Frame(self.content_container, bg=self.BG_LIGHT)
+        result_container.pack(fill="both", expand=True)
+    
+    def load_statistics(self):
+        """載入統計資訊（用於更新 dashboard）"""
+        pass  # 已在 show_dashboard 中實現
     
     def run(self):
         """執行應用程式"""
@@ -1138,7 +1313,7 @@ class VocabularyApp:
         self.root.mainloop()
     
     def on_closing(self):
-        """關閉應用程式時的處理"""
+        """關閉應用程式"""
         self.db.close()
         self.root.destroy()
 
@@ -1146,7 +1321,7 @@ class VocabularyApp:
 def main():
     """主程式"""
     root = tk.Tk()
-    app = VocabularyApp(root)
+    app = ModernVocabApp(root)
     app.run()
 
 

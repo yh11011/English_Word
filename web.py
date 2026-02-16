@@ -60,7 +60,7 @@ def init_db():
 @app.route('/')
 def index():
     """首頁"""
-    return render_template('index.html')
+    return render_template('vocabmaster.html')
 
 
 @app.route('/api/words', methods=['GET'])
