@@ -19,7 +19,7 @@ class Word:
     """
     
     def __init__(self, word_id: int, english: str, chinese: str, 
-                 folder: str, error_count: int = 0):
+                 folder: str, error_count: int = 0, part_of_speech: str = ''):
         """
         初始化函數 - 建立一個新的單字物件時會執行
         
@@ -29,19 +29,21 @@ class Word:
         chinese: 中文意思
         folder: 所屬的資料夾名稱
         error_count: 錯誤次數（預設是 0）
+        part_of_speech: 詞性（預設空字串）
         """
         self.id = word_id  # 儲存單字編號
         self.english = english.lower().strip()  # 轉小寫並去除前後空白
         self.chinese = chinese.strip()  # 去除前後空白
-        self.folder = folder.lower().strip()  # 轉小寫並去除前後空白
+        self.folder = folder.strip()  # 去除前後空白（不轉小寫，保留中文級別名稱）
         self.error_count = error_count  # 儲存錯誤次數
+        self.part_of_speech = part_of_speech.strip() if part_of_speech else ''  # 詞性
     
     def __str__(self):
         """
         當我們想要印出這個物件時，會顯示的內容
         例如：print(word) 時會顯示單字的所有資訊
         """
-        return f"ID:{self.id} | {self.folder} | {self.english} - {self.chinese} (錯誤{self.error_count}次)"
+        return f"ID:{self.id} | {self.folder} | {self.english} ({self.part_of_speech}) - {self.chinese} (錯誤{self.error_count}次)"
 
 
 class VocabularyDatabase:
@@ -117,6 +119,7 @@ class VocabularyDatabase:
                 english TEXT NOT NULL,
                 chinese TEXT NOT NULL,
                 folder TEXT NOT NULL,
+                part_of_speech TEXT DEFAULT '',
                 error_count INTEGER DEFAULT 0
             )
             """
@@ -137,6 +140,16 @@ class VocabularyDatabase:
                 ON words(english)
             """)
             
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_error_count
+                ON words(error_count)
+            """)
+            
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_folder_english
+                ON words(folder, english)
+            """)
+            
             # commit() 是「提交」的意思
             # 資料庫的修改要執行 commit() 才會真正儲存
             self.connection.commit()
@@ -145,7 +158,7 @@ class VocabularyDatabase:
         except sqlite3.Error as e:
             print(f"[錯誤] 建立資料表失敗: {e}")
     
-    def add_word(self, english: str, chinese: str, folder: str) -> bool:
+    def add_word(self, english: str, chinese: str, folder: str, part_of_speech: str = '') -> bool:
         """
         新增一個單字到資料庫
         
@@ -171,7 +184,7 @@ class VocabularyDatabase:
                 SELECT id FROM words 
                 WHERE folder = ? AND english = ?
             """
-            self.cursor.execute(check_sql, (folder.lower(), english.lower()))
+            self.cursor.execute(check_sql, (folder.strip(), english.lower()))
             
             # fetchone() 取得一筆資料，如果沒有資料會回傳 None
             existing = self.cursor.fetchone()
@@ -184,12 +197,12 @@ class VocabularyDatabase:
             # INSERT INTO：插入新資料
             # VALUES (?, ?, ?, ?)：四個問號代表四個參數
             insert_sql = """
-                INSERT INTO words (english, chinese, folder, error_count)
-                VALUES (?, ?, ?, 0)
+                INSERT INTO words (english, chinese, folder, part_of_speech, error_count)
+                VALUES (?, ?, ?, ?, 0)
             """
             
             # 執行插入指令，並傳入參數
-            self.cursor.execute(insert_sql, (english.lower(), chinese, folder.lower()))
+            self.cursor.execute(insert_sql, (english.lower(), chinese, folder.strip(), part_of_speech))
             
             # 提交變更（儲存到資料庫）
             self.connection.commit()
@@ -216,7 +229,7 @@ class VocabularyDatabase:
             # SELECT * FROM：選取所有欄位
             # ORDER BY folder, english：按照資料夾和英文排序
             select_sql = """
-                SELECT id, english, chinese, folder, error_count
+                SELECT id, english, chinese, folder, error_count, part_of_speech
                 FROM words
                 ORDER BY folder, english
             """
@@ -239,7 +252,8 @@ class VocabularyDatabase:
                     english=row[1],
                     chinese=row[2],
                     folder=row[3],
-                    error_count=row[4]
+                    error_count=row[4],
+                    part_of_speech=row[5]
                 )
                 # 把建立的 Word 物件加入串列
                 words.append(word)
@@ -263,18 +277,18 @@ class VocabularyDatabase:
         try:
             # WHERE folder = ?：只選取符合條件的資料
             select_sql = """
-                SELECT id, english, chinese, folder, error_count
+                SELECT id, english, chinese, folder, error_count, part_of_speech
                 FROM words
                 WHERE folder = ?
                 ORDER BY english
             """
             
-            self.cursor.execute(select_sql, (folder.lower(),))
+            self.cursor.execute(select_sql, (folder.strip(),))
             rows = self.cursor.fetchall()
             
             words = []
             for row in rows:
-                word = Word(row[0], row[1], row[2], row[3], row[4])
+                word = Word(row[0], row[1], row[2], row[3], row[4], row[5])
                 words.append(word)
             
             return words
@@ -297,7 +311,7 @@ class VocabularyDatabase:
             # LIKE '%keyword%'：模糊搜尋，% 代表任意字元
             # OR：或者（只要符合其中一個條件即可）
             select_sql = """
-                SELECT id, english, chinese, folder, error_count
+                SELECT id, english, chinese, folder, error_count, part_of_speech
                 FROM words
                 WHERE english LIKE ? OR chinese LIKE ?
                 ORDER BY folder, english
@@ -312,7 +326,7 @@ class VocabularyDatabase:
             
             words = []
             for row in rows:
-                word = Word(row[0], row[1], row[2], row[3], row[4])
+                word = Word(row[0], row[1], row[2], row[3], row[4], row[5])
                 words.append(word)
             
             return words
@@ -423,7 +437,7 @@ class VocabularyDatabase:
             # WHERE error_count > 0：只選取錯誤次數大於 0 的單字
             # ORDER BY error_count DESC：按錯誤次數降序排列（DESC = descending）
             select_sql = """
-                SELECT id, english, chinese, folder, error_count
+                SELECT id, english, chinese, folder, error_count, part_of_speech
                 FROM words
                 WHERE error_count > 0
                 ORDER BY error_count DESC, english
@@ -434,7 +448,7 @@ class VocabularyDatabase:
             
             words = []
             for row in rows:
-                word = Word(row[0], row[1], row[2], row[3], row[4])
+                word = Word(row[0], row[1], row[2], row[3], row[4], row[5])
                 words.append(word)
             
             return words
