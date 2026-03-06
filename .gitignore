@@ -7,3 +7,4 @@ english_word.txt
 # python cache
 __pycache__/
 *.pyc
+*.bak.*
