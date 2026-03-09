@@ -752,13 +752,29 @@ def review_word(word_id):
 # ------------------ Export / Import (CSV) endpoints ------------------
 @app.route('/api/export', methods=['GET'])
 def export_csv():
-    """Simple CSV export of all words. Returns text/csv."""
+    """CSV export with owner/folder filtering support. Returns text/csv."""
     import csv
     from io import StringIO
 
+    owner = request.args.get('owner')
+    folder = request.args.get('folder')
+
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, english, chinese, folder, error_count, created_at, next_review, interval, efactor, repetitions FROM words ORDER BY folder, english")
+
+    where_clauses = []
+    params = []
+    if owner:
+        where_clauses.append('owner_id = ?')
+        params.append(owner)
+    if folder and folder != 'all':
+        where_clauses.append('folder = ?')
+        params.append(folder)
+
+    where_clause = ('WHERE ' + ' AND '.join(where_clauses)) if where_clauses else ''
+
+    sql = f"SELECT id, english, chinese, folder, error_count, created_at, next_review, interval, efactor, repetitions FROM words {where_clause} ORDER BY folder, english"
+    cur.execute(sql, tuple(params))
     rows = cur.fetchall()
 
     si = StringIO()
@@ -777,7 +793,9 @@ def export_csv():
 @app.route('/api/import', methods=['POST'])
 @require_auth
 def import_csv():
-    """Import CSV (multipart form file upload) into database. Dedupe by folder+english."""
+    """Import CSV (multipart form file upload) into database. Dedupe by owner+folder+english.
+    Returns summary of imported/skipped rows.
+    """
     if 'file' not in request.files:
         return jsonify({'success': False, 'message': 'no file uploaded'}), 400
     f = request.files['file']
@@ -790,21 +808,36 @@ def import_csv():
     conn = get_db()
     cur = conn.cursor()
     added = 0
+    skipped = 0
+    errors = 0
+    # determine owner from session if present
+    owner_id = session.get('user_id')
     for row in reader:
-        english = (row.get('english') or '').strip().lower()
-        chinese = (row.get('chinese') or '').strip()
-        folder = (row.get('folder') or '').strip().lower() or 'imported'
-        if not english or not chinese:
-            continue
-        # dedupe
-        cur.execute("SELECT id FROM words WHERE folder = ? AND english = ?", (folder, english))
-        if cur.fetchone():
-            continue
-        cur.execute("INSERT INTO words (english, chinese, folder, error_count) VALUES (?, ?, ?, 0)", (english, chinese, folder))
-        added += 1
+        try:
+            english = (row.get('english') or '').strip().lower()
+            chinese = (row.get('chinese') or '').strip()
+            folder = (row.get('folder') or '').strip().lower() or 'imported'
+            if not english or not chinese:
+                skipped += 1
+                continue
+            # dedupe by owner+folder+english
+            if owner_id:
+                cur.execute("SELECT id FROM words WHERE owner_id = ? AND folder = ? AND english = ?", (owner_id, folder, english))
+            else:
+                cur.execute("SELECT id FROM words WHERE folder = ? AND english = ?", (folder, english))
+            if cur.fetchone():
+                skipped += 1
+                continue
+            if owner_id:
+                cur.execute("INSERT INTO words (english, chinese, folder, error_count, owner_id) VALUES (?, ?, ?, 0, ?)", (english, chinese, folder, owner_id))
+            else:
+                cur.execute("INSERT INTO words (english, chinese, folder, error_count) VALUES (?, ?, ?, 0)", (english, chinese, folder))
+            added += 1
+        except Exception:
+            errors += 1
     conn.commit()
     clear_statistics_cache()
-    return jsonify({'success': True, 'added': added})
+    return jsonify({'success': True, 'added': added, 'skipped': skipped, 'errors': errors})
 
 
 if __name__ == '__main__':
