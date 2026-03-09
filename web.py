@@ -68,6 +68,11 @@ def init_db():
             chinese TEXT NOT NULL,
             folder TEXT NOT NULL,
             error_count INTEGER DEFAULT 0,
+            owner_id INTEGER,
+            next_review INTEGER,
+            interval INTEGER DEFAULT 0,
+            efactor REAL DEFAULT 2.5,
+            repetitions INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -79,6 +84,10 @@ def init_db():
 
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_english ON words(english)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_words_owner_id ON words(owner_id)
     """)
 
     conn.commit()
