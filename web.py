@@ -6,7 +6,8 @@
 
 This file was updated to add optional FTS5 search support, token-based API
 authentication, CSRF protection for browser mutating requests, small caching
-helpers and safer DB patterns.
+helpers and safer DB patterns. Added minimal SRS (SM-2 inspired) support with
+an auto-migrate gate controlled by MIGRATE_SRS environment variable.
 """
 
 from flask import Flask, render_template, request, jsonify, session, g
@@ -17,6 +18,7 @@ from datetime import datetime
 import secrets
 import logging
 from functools import lru_cache, wraps
+import time
 
 app = Flask(__name__)
 # Load secrets from environment; fall back to a random key for quick dev but log a warning
@@ -32,6 +34,8 @@ if not API_TOKEN:
 
 # 資料庫設定
 DB_NAME = os.environ.get('DB_NAME', 'vocabulary.db')
+# Gate automatic SRS migration: set MIGRATE_SRS=1 to allow ALTER TABLE to add SRS columns
+MIGRATE_SRS = os.environ.get('MIGRATE_SRS', '0') == '1'
 
 
 # ------------------ DB helpers ------------------
@@ -78,6 +82,140 @@ def init_db():
     """)
 
     conn.commit()
+
+    # Ensure SRS columns exist. If MIGRATE_SRS=1 then automatically ALTER TABLE to add missing columns.
+    try:
+        ensure_srs_columns(conn)
+    except Exception as e:
+        logging.exception("SRS migration failed or skipped: %s", e)
+
+
+# ------------------ SRS / migration helpers ------------------
+
+def _get_table_columns(conn, table_name):
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(%s)" % table_name)
+    return [r['name'] for r in cur.fetchall()]
+
+
+def _add_column(conn, table, column_def):
+    # column_def should be like "next_review INTEGER"
+    cur = conn.cursor()
+    sql = f"ALTER TABLE {table} ADD COLUMN {column_def}"
+    cur.execute(sql)
+    conn.commit()
+
+
+def ensure_srs_columns(conn):
+    """Check for SRS columns and add them if MIGRATE_SRS is enabled.
+    Columns added: next_review INTEGER, interval INTEGER DEFAULT 0, efactor REAL DEFAULT 2.5, repetitions INTEGER DEFAULT 0
+    This function will not remove or modify existing columns.
+    """
+    cols = _get_table_columns(conn, 'words')
+    required = {
+        'next_review': "next_review INTEGER",
+        'interval': "interval INTEGER DEFAULT 0",
+        'efactor': "efactor REAL DEFAULT 2.5",
+        'repetitions': "repetitions INTEGER DEFAULT 0",
+    }
+    missing = [k for k in required.keys() if k not in cols]
+    if not missing:
+        return
+
+    msg = f"SRS columns missing: {missing}. MIGRATE_SRS={'1' if MIGRATE_SRS else '0'}"
+    logging.info(msg)
+    if not MIGRATE_SRS:
+        logging.info("Auto-migration disabled; set MIGRATE_SRS=1 to add SRS columns automatically or run tools/migrate_add_srs.py")
+        return
+
+    # Backup DB file (best-effort)
+    try:
+        ts = int(time.time())
+        backup = f"{DB_NAME}.bak.{ts}"
+        import shutil
+
+        shutil.copyfile(DB_NAME, backup)
+        logging.info("Database backed up to %s before migration", backup)
+    except Exception:
+        logging.exception("Failed to create DB backup before migration; proceeding with caution")
+
+    # Add missing columns
+    for k in missing:
+        try:
+            _add_column(conn, 'words', required[k])
+            logging.info("Added column %s", k)
+        except Exception:
+            logging.exception("Failed to add column %s", k)
+
+
+def _fetch_word_by_id(conn, word_id):
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM words WHERE id = ?", (word_id,))
+    row = cur.fetchone()
+    return row
+
+
+def schedule_review(conn, word_id, quality):
+    """Schedule/update SRS fields for a word using SM-2-inspired rules.
+    quality: int 0-5 (5 best)
+    Returns updated row as dict.
+    """
+    if quality is None:
+        raise ValueError("quality required")
+    quality = int(quality)
+    if quality < 0 or quality > 5:
+        raise ValueError("quality must be 0-5")
+
+    now = int(time.time())
+    cur = conn.cursor()
+    row = _fetch_word_by_id(conn, word_id)
+    if not row:
+        return None
+
+    # Read existing SRS values, provide defaults if missing
+    efactor = float(row['efactor'] or 2.5) if 'efactor' in row.keys() else 2.5
+    interval = int(row['interval'] or 0) if 'interval' in row.keys() else 0
+    repetitions = int(row['repetitions'] or 0) if 'repetitions' in row.keys() else 0
+
+    # SM-2 algorithm (standard): adjust efactor and intervals
+    if quality < 3:
+        # repeat next day, reset repetitions
+        repetitions = 0
+        interval = 1
+    else:
+        repetitions += 1
+        if repetitions == 1:
+            interval = 1
+        elif repetitions == 2:
+            interval = 6
+        else:
+            # multiply previous interval by efactor
+            interval = max(1, round(interval * efactor))
+
+    # Update efactor based on quality
+    # Standard SM-2 efactor update formula
+    # ef' = ef + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
+    efactor = efactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+    if efactor < 1.3:
+        efactor = 1.3
+
+    next_review = now + interval * 86400
+
+    cur.execute("""
+        UPDATE words
+        SET efactor = ?, interval = ?, repetitions = ?, next_review = ?
+        WHERE id = ?
+    """, (efactor, interval, repetitions, next_review, word_id))
+
+    conn.commit()
+    # Clear cached statistics if needed
+    try:
+        clear_statistics_cache()
+    except Exception:
+        pass
+
+    cur.execute("SELECT * FROM words WHERE id = ?", (word_id,))
+    return dict(cur.fetchone())
 
 
 # ------------------ App teardown ------------------
@@ -425,11 +563,8 @@ def search_words():
 
     if fts_exists:
         # Use FTS5 MATCH safely with parameters
-        # Note: SQLite's FTS5 MATCH doesn't accept parameter placeholders for the whole expression in some bindings,
-        # but using ? here works with the python sqlite3 module by passing a single string.
-        match_expr = keyword
-        # Prefer exact phrase matches when keyword contains spaces; otherwise use prefix* style
         try:
+            match_expr = keyword
             cursor.execute("SELECT w.* FROM words w JOIN words_fts f ON f.rowid = w.id WHERE words_fts MATCH ? LIMIT 100", (match_expr,))
             words = [dict(row) for row in cursor.fetchall()]
             return jsonify(words)
@@ -474,6 +609,117 @@ def get_statistics():
     """取得統計資訊（使用簡單快取）"""
     stats = _cached_statistics()
     return jsonify(stats)
+
+
+# ------------------ SRS API endpoints ------------------
+@app.route('/api/due', methods=['GET'])
+def get_due_words():
+    """Return words due for review: next_review IS NULL OR next_review <= now. Supports pagination and folder filter."""
+    folder = request.args.get('folder')
+    page, limit, offset = parse_pagination_args()
+    now = int(time.time())
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    where_clauses = ["(next_review IS NULL OR next_review <= ?) "]
+    params = [now]
+    if folder and folder != 'all':
+        where_clauses.append('folder = ?')
+        params.append(folder)
+
+    where_clause = 'WHERE ' + ' AND '.join(where_clauses)
+
+    count_sql = f"SELECT COUNT(*) as cnt FROM words {where_clause}"
+    cursor.execute(count_sql, tuple(params))
+    total = cursor.fetchone()['cnt']
+
+    data_sql = f"SELECT id, english, chinese, folder, error_count, created_at, next_review, interval, efactor, repetitions FROM words {where_clause} ORDER BY next_review ASC, folder, english LIMIT ? OFFSET ?"
+    data_params = params + [limit, offset]
+    cursor.execute(data_sql, tuple(data_params))
+    words = [dict(row) for row in cursor.fetchall()]
+
+    resp = jsonify({'page': page, 'limit': limit, 'total': total, 'words': words})
+    resp.headers['Cache-Control'] = 'public, max-age=15'
+    return resp
+
+
+@app.route('/api/words/<int:word_id>/review', methods=['PUT'])
+@require_auth
+def review_word(word_id):
+    """Record a review for a single word. Accepts JSON {quality: 0-5} and returns updated word row."""
+    data = request.get_json(silent=True) or {}
+    q = data.get('quality')
+    try:
+        quality = int(q)
+    except Exception:
+        return jsonify({'success': False, 'message': 'quality must be an integer 0-5'}), 400
+    if quality < 0 or quality > 5:
+        return jsonify({'success': False, 'message': 'quality must be between 0 and 5'}), 400
+
+    conn = get_db()
+    updated = schedule_review(conn, word_id, quality)
+    if not updated:
+        return jsonify({'success': False, 'message': 'word not found'}), 404
+    return jsonify({'success': True, 'word': updated})
+
+
+# ------------------ Export / Import (CSV) endpoints ------------------
+@app.route('/api/export', methods=['GET'])
+def export_csv():
+    """Simple CSV export of all words. Returns text/csv."""
+    import csv
+    from io import StringIO
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT id, english, chinese, folder, error_count, created_at, next_review, interval, efactor, repetitions FROM words ORDER BY folder, english")
+    rows = cur.fetchall()
+
+    si = StringIO()
+    writer = csv.writer(si)
+    writer.writerow(['id','english','chinese','folder','error_count','created_at','next_review','interval','efactor','repetitions'])
+    for r in rows:
+        writer.writerow([r['id'], r['english'], r['chinese'], r['folder'], r['error_count'], r['created_at'], r.get('next_review'), r.get('interval'), r.get('efactor'), r.get('repetitions')])
+
+    output = si.getvalue()
+    from flask import Response
+    resp = Response(output, mimetype='text/csv')
+    resp.headers['Content-Disposition'] = 'attachment; filename=words_export.csv'
+    return resp
+
+
+@app.route('/api/import', methods=['POST'])
+@require_auth
+def import_csv():
+    """Import CSV (multipart form file upload) into database. Dedupe by folder+english."""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'message': 'no file uploaded'}), 400
+    f = request.files['file']
+    import csv
+    from io import StringIO
+
+    data = f.read().decode('utf-8')
+    si = StringIO(data)
+    reader = csv.DictReader(si)
+    conn = get_db()
+    cur = conn.cursor()
+    added = 0
+    for row in reader:
+        english = (row.get('english') or '').strip().lower()
+        chinese = (row.get('chinese') or '').strip()
+        folder = (row.get('folder') or '').strip().lower() or 'imported'
+        if not english or not chinese:
+            continue
+        # dedupe
+        cur.execute("SELECT id FROM words WHERE folder = ? AND english = ?", (folder, english))
+        if cur.fetchone():
+            continue
+        cur.execute("INSERT INTO words (english, chinese, folder, error_count) VALUES (?, ?, ?, 0)", (english, chinese, folder))
+        added += 1
+    conn.commit()
+    clear_statistics_cache()
+    return jsonify({'success': True, 'added': added})
 
 
 if __name__ == '__main__':

@@ -69,6 +69,7 @@
         <h2>Flashcards</h2>
         <label>資料夾 <select id="fcFolder"><option value="all">全部</option></select></label>
         <button id="fcLoad">載入</button>
+        <button id="fcLoadDue">載入 Due 單字</button>
         <div id="fcSpinner" style="display:none"><span class="spinner" aria-hidden="true"></span></div>
         <div id="fcArea" style="margin-top:8px"></div>
     </div>
@@ -224,18 +225,67 @@
 
     // Flashcards load
     document.getElementById('fcLoad').addEventListener('click', loadFlashcards);
+    document.getElementById('fcLoadDue').addEventListener('click', loadDueFlashcards);
+    let flashWords = [];
+    let flashIndex = 0;
+
     async function loadFlashcards(){
         const folder = document.getElementById('fcFolder').value || 'all';
         const spinner = document.getElementById('fcSpinner'); spinner.style.display='inline-block';
         try{
             const data = await apiGet('/api/words?folder='+encodeURIComponent(folder)+`&page=1&limit=500`);
-            const words = data.words || [];
-            const area = document.getElementById('fcArea');
-            if(!words.length){ area.innerHTML = '<div>沒有單字</div>'; return; }
-            area.innerHTML = `<div>Loaded ${words.length} words</div>`;
+            flashWords = data.words || [];
+            flashIndex = 0;
+            renderFlashCard();
         }catch(err){ console.error(err); toast('載入 flashcards 失敗','error'); }
         finally{ spinner.style.display='none'; }
     }
+
+    async function loadDueFlashcards(){
+        const folder = document.getElementById('fcFolder').value || 'all';
+        const spinner = document.getElementById('fcSpinner'); spinner.style.display='inline-block';
+        try{
+            const data = await apiGet('/api/due?folder='+encodeURIComponent(folder)+`&page=1&limit=500`);
+            flashWords = data.words || [];
+            flashIndex = 0;
+            renderFlashCard();
+        }catch(err){ console.error(err); toast('載入 Due 單字 失敗','error'); }
+        finally{ spinner.style.display='none'; }
+    }
+
+    function renderFlashCard(){
+        const area = document.getElementById('fcArea');
+        if(!flashWords || flashWords.length === 0){ area.innerHTML = '<div>沒有單字</div>'; return; }
+        if(flashIndex >= flashWords.length){ area.innerHTML = `<div>已練習完 ${flashWords.length} 個單字</div>`; return; }
+        const w = flashWords[flashIndex];
+        // show simple card with two action buttons
+        area.innerHTML = `
+            <div style="padding:12px;border-radius:8px;background:rgba(255,255,255,0.02)">
+                <div style="font-size:1.25rem;font-weight:600">${escapeHtml(w.english)}</div>
+                <div style="color:#B0B8C6;margin-top:6px">${escapeHtml(w.chinese)}</div>
+                <div style="margin-top:8px">
+                    <button id="btnKnown">我知道</button>
+                    <button id="btnUnknown">我不會</button>
+                </div>
+                <div style="margin-top:8px;color:#888;font-size:0.85rem">第 ${flashIndex+1} / ${flashWords.length}</div>
+            </div>
+        `;
+        document.getElementById('btnKnown').addEventListener('click', async ()=>{
+            await submitReview(w.id, 5);
+        });
+        document.getElementById('btnUnknown').addEventListener('click', async ()=>{
+            await submitReview(w.id, 2);
+        });
+    }
+
+    async function submitReview(id, quality){
+        try{
+            await api(`/api/words/${id}/review`, {method:'PUT', body: JSON.stringify({quality}), headers: {'Content-Type':'application/json'}});
+            flashIndex++;
+            renderFlashCard();
+        }catch(err){ console.error(err); toast('記錄評分失敗','error'); }
+    }
+
 
     // Init
     (async function(){ await loadFolderSelect('mgmtFolder'); await loadFolderSelect('fcFolder'); document.getElementById('mgmtPageSize').value='10'; mgmtState.limit = 10; loadManagement(); })();
