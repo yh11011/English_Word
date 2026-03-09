@@ -129,10 +129,12 @@ def _is_valid_csrf(req):
 
 
 def _is_valid_api_token(req):
+    # Read API token from environment at call-time so tests and runtime can set it dynamically
+    api_token = os.environ.get('API_TOKEN')
     auth = req.headers.get('Authorization', '')
     if auth.startswith('Bearer '):
         token = auth.split(' ', 1)[1].strip()
-        if API_TOKEN and token == API_TOKEN:
+        if api_token and token == api_token:
             return True
     return False
 
