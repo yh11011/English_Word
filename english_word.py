@@ -120,9 +120,31 @@ class VocabularyDatabase:
                 chinese TEXT NOT NULL,
                 folder TEXT NOT NULL,
                 part_of_speech TEXT DEFAULT '',
-                error_count INTEGER DEFAULT 0
+                error_count INTEGER DEFAULT 0,
+                owner_id INTEGER,
+                next_review INTEGER,
+                interval INTEGER DEFAULT 0,
+                efactor REAL DEFAULT 2.5,
+                repetitions INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
+
+            # Create a simple users table to support ownership/auth (CLI may ignore)
+            self.cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    created_at INTEGER DEFAULT (strftime('%s','now'))
+                )
+            """)
+
+            # Index to speed up owner-based queries
+            self.cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_words_owner_id
+                ON words(owner_id)
+            """)
             
             # 執行 SQL 指令
             self.cursor.execute(create_table_sql)
