@@ -1,0 +1,18 @@
+/* Extracted CSS from templates/vocabmaster.html (partial) */
+/* Only essential layout and theme variables retained for brevity. */
+:root, [data-theme="dark"] {
+    --bg-deep: #0B0E14;
+    --bg-surface: #111620;
+    --text-primary: #E8ECF4;
+    --text-secondary: #7A839B;
+    --accent-1: #6C5CE7;
+}
+body { font-family: 'DM Sans', sans-serif; background: var(--bg-deep); color: var(--text-primary); }
+.sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 72px; background: rgba(11,14,20,0.95); padding: 20px 0; }
+.main { margin-left: 72px; padding: 20px; }
+.card { background: rgba(22,28,40,0.7); padding: 16px; border-radius: 12px; }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td { padding: 8px 10px; text-align: left; }
+.btn-primary { background: var(--accent-1); color: #fff; padding: 10px 14px; border-radius: 8px; }
+.form-input { width: 100%; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.04); color: var(--text-primary); }
+/* Add any additional rules as needed */
