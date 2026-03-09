@@ -8,3 +8,6 @@ english_word.txt
 __pycache__/
 *.pyc
 *.bak.*
+
+# Virtual environment
+.venv/
