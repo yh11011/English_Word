@@ -28,8 +28,29 @@ def create_database(db_name="vocabulary.db"):
             english TEXT NOT NULL,
             chinese TEXT NOT NULL,
             folder TEXT NOT NULL,
-            error_count INTEGER DEFAULT 0
+            error_count INTEGER DEFAULT 0,
+            owner_id INTEGER,
+            next_review INTEGER,
+            interval INTEGER DEFAULT 0,
+            efactor REAL DEFAULT 2.5,
+            repetitions INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+    """)
+
+    # Create users table to support auth flows
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at INTEGER DEFAULT (strftime('%s','now'))
+        )
+    """)
+
+    # owner index
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_words_owner_id ON words(owner_id)
     """)
 
     cursor.execute("""
