@@ -101,8 +101,11 @@ def parse_pagination_args():
         page = 1
     try:
         limit = int(request.args.get('limit', 50))
-        if limit < 1 or limit > 1000:
+        # Enforce sensible bounds to avoid huge payloads
+        if limit < 1:
             limit = 50
+        if limit > 500:
+            limit = 500
     except ValueError:
         limit = 50
     offset = (page - 1) * limit
@@ -222,37 +225,84 @@ def index():
 
 @app.route('/api/words', methods=['GET'])
 def get_words():
-    """取得所有單字或指定資料夾的單字（支援分頁）"""
+    """取得單字，支援分頁與搜尋（使用 FTS5 優先，否則使用 LIKE 回退）。
+
+    Query params:
+      - folder: string (optional, 'all' means no folder filter)
+      - page: int
+      - limit: int
+      - keyword: string (search term)
+    """
     folder = request.args.get('folder')
+    keyword = (request.args.get('keyword') or '').strip()
     page, limit, offset = parse_pagination_args()
+
+    # Validate keyword length
+    if keyword and (len(keyword) < 1 or len(keyword) > 200):
+        # Return empty result set for out-of-range keyword
+        resp = jsonify({'page': page, 'limit': limit, 'total': 0, 'words': []})
+        resp.headers['Cache-Control'] = 'public, max-age=30'
+        return resp
 
     conn = get_db()
     cursor = conn.cursor()
 
+    where_clauses = []
     params = []
-    where = ''
     if folder and folder != 'all':
-        where = 'WHERE folder = ?'
+        where_clauses.append('folder = ?')
         params.append(folder)
 
-    # 取得總數（分頁需要）
-    count_sql = f"SELECT COUNT(*) as cnt FROM words {where}"
+    total = 0
+    # If a keyword is provided, prefer using FTS if available
+    if keyword:
+        # Check for words_fts
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='words_fts'")
+            fts_exists = cursor.fetchone() is not None
+        except Exception:
+            fts_exists = False
+
+        if fts_exists:
+            # Use FTS MATCH query and compute total via COUNT on joined table
+            match_expr = keyword
+            where_clause = ' AND '.join(where_clauses) if where_clauses else '1=1'
+            count_sql = f"SELECT COUNT(*) as cnt FROM words w JOIN words_fts f ON f.rowid = w.id WHERE {where_clause} AND words_fts MATCH ?"
+            count_params = params + [match_expr]
+            cursor.execute(count_sql, tuple(count_params))
+            total = cursor.fetchone()['cnt']
+
+            data_sql = f"SELECT w.id, w.english, w.chinese, w.folder, w.error_count, w.created_at FROM words w JOIN words_fts f ON f.rowid = w.id WHERE {where_clause} AND words_fts MATCH ? ORDER BY w.folder, w.english LIMIT ? OFFSET ?"
+            data_params = params + [match_expr, limit, offset]
+            cursor.execute(data_sql, tuple(data_params))
+            words = [dict(row) for row in cursor.fetchall()]
+
+            resp = jsonify({'page': page, 'limit': limit, 'total': total, 'words': words})
+            resp.headers['Cache-Control'] = 'public, max-age=30'
+            return resp
+        else:
+            # Fallback to LIKE
+            search_pattern = f"%{keyword}%"
+            where_clauses.append('(english LIKE ? OR chinese LIKE ?)')
+            params.extend([search_pattern, search_pattern])
+
+    # Build final where clause
+    where_clause = ('WHERE ' + ' AND '.join(where_clauses)) if where_clauses else ''
+
+    # Count total
+    count_sql = f"SELECT COUNT(*) as cnt FROM words {where_clause}"
     cursor.execute(count_sql, tuple(params))
     total = cursor.fetchone()['cnt']
 
-    # 撈分頁資料
-    data_sql = f"SELECT * FROM words {where} ORDER BY folder, english LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
-    cursor.execute(data_sql, tuple(params))
-
+    # Select only necessary columns
+    data_sql = f"SELECT id, english, chinese, folder, error_count, created_at FROM words {where_clause} ORDER BY folder, english LIMIT ? OFFSET ?"
+    data_params = params + [limit, offset]
+    cursor.execute(data_sql, tuple(data_params))
     words = [dict(row) for row in cursor.fetchall()]
 
-    return jsonify({
-        'page': page,
-        'limit': limit,
-        'total': total,
-        'words': words
-    })
+    resp = jsonify({'page': page, 'limit': limit, 'total': total, 'words': words})
+    resp.headers['Cache-Control'] = 'public, max-age=30'
+    return resp
 
 
 @app.route('/api/words', methods=['POST'])
@@ -348,7 +398,10 @@ def get_folders():
 
     folders = [row['folder'] for row in cursor.fetchall()]
 
-    return jsonify(folders)
+    resp = jsonify(folders)
+    # Short client cache for folders
+    resp.headers['Cache-Control'] = 'public, max-age=30'
+    return resp
 
 
 @app.route('/api/search', methods=['GET'])
