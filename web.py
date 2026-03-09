@@ -278,6 +278,9 @@ def _is_valid_csrf(req):
     return False
 
 
+from werkzeug.security import generate_password_hash, check_password_hash
+
+
 def _is_valid_api_token(req):
     # Read API token from environment at call-time so tests and runtime can set it dynamically
     api_token = os.environ.get('API_TOKEN')
@@ -286,7 +289,24 @@ def _is_valid_api_token(req):
         token = auth.split(' ', 1)[1].strip()
         if api_token and token == api_token:
             return True
+    # Support X-API-Token header for legacy clients
+    token = req.headers.get('X-API-Token')
+    if token and api_token and token == api_token:
+        return True
     return False
+
+
+def get_current_user(conn=None):
+    """Return current user row or None. Checks session['user_id'] or API token mapping.
+    Note: API token does not map to a user; sessions created by login do.
+    """
+    if 'user_id' in session:
+        conn = conn or get_db()
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM users WHERE id = ?', (session['user_id'],))
+        row = cur.fetchone()
+        return dict(row) if row else None
+    return None
 
 
 def require_auth(f):
@@ -362,6 +382,62 @@ def clear_statistics_cache():
 def ensure_session_csrf():
     # Ensure session has csrf token for browser flows
     ensure_csrf_token()
+
+
+# --- Auth endpoints (register/login/logout/me)
+@app.route('/auth/register', methods=['POST'])
+def auth_register():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    password = data.get('password') or ''
+    if not email or not password:
+        return jsonify({'success': False, 'message': 'email and password required'}), 400
+    conn = get_db()
+    cur = conn.cursor()
+    # check exists
+    cur.execute('SELECT id FROM users WHERE email = ?', (email,))
+    if cur.fetchone():
+        return jsonify({'success': False, 'message': 'user already exists'}), 400
+    pw_hash = generate_password_hash(password)
+    cur.execute('INSERT INTO users (email, password_hash) VALUES (?, ?)', (email, pw_hash))
+    conn.commit()
+    user_id = cur.lastrowid
+    session['user_id'] = user_id
+    return jsonify({'success': True, 'id': user_id})
+
+
+@app.route('/auth/login', methods=['POST'])
+def auth_login():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    password = data.get('password') or ''
+    if not email or not password:
+        return jsonify({'success': False, 'message': 'email and password required'}), 400
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM users WHERE email = ?', (email,))
+    row = cur.fetchone()
+    if not row or not check_password_hash(row['password_hash'], password):
+        return jsonify({'success': False, 'message': 'invalid credentials'}), 401
+    session['user_id'] = row['id']
+    return jsonify({'success': True, 'id': row['id']})
+
+
+@app.route('/auth/logout', methods=['POST'])
+def auth_logout():
+    session.pop('user_id', None)
+    return jsonify({'success': True})
+
+
+@app.route('/auth/me', methods=['GET'])
+def auth_me():
+    conn = get_db()
+    u = get_current_user(conn)
+    if not u:
+        return jsonify({'success': False, 'user': None}), 200
+    # don't leak password_hash
+    u.pop('password_hash', None)
+    return jsonify({'success': True, 'user': u})
 
 
 @app.route('/')
