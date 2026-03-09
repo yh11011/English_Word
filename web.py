@@ -86,9 +86,17 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_english ON words(english)
     """)
 
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_words_owner_id ON words(owner_id)
-    """)
+    # Create owner_id index only if the column exists (guard for older DBs)
+    try:
+        cursor.execute("PRAGMA table_info(words)")
+        cols = [r[1] for r in cursor.fetchall()]
+        if 'owner_id' in cols:
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_words_owner_id ON words(owner_id)
+            """)
+    except Exception:
+        # best-effort: ignore index creation failures
+        pass
 
     conn.commit()
 
