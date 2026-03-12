@@ -19,6 +19,8 @@ import secrets
 import logging
 from functools import lru_cache, wraps
 import time
+from morphology_analyzer import MorphologyDatabase, MorphologyAnalyzer
+from ai_services import ai_service
 
 app = Flask(__name__)
 # Load secrets from environment; fall back to a random key for quick dev but log a warning
@@ -454,6 +456,69 @@ def index():
     return render_template('vocabmaster.html', csrf_token=session.get('csrf_token'))
 
 
+@app.route('/morphology')
+def morphology():
+    """構詞學習頁面"""
+    return render_template('morphology.html', csrf_token=session.get('csrf_token'))
+
+
+@app.route('/health')
+def health_check():
+    """健康檢查端點"""
+    try:
+        # 檢查資料庫連接
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM words LIMIT 1")
+        word_count = cursor.fetchone()[0]
+
+        # 檢查AI服務
+        from ai_services import ai_service
+        ai_stats = ai_service.get_ai_stats()
+
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'database': 'connected',
+            'word_count': word_count,
+            'ai_services': 'available',
+            'ai_stats': ai_stats,
+            'version': '1.0.0-ai-enhanced'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
+@app.route('/ai-learning')
+def ai_learning():
+    """AI智慧學習頁面"""
+    return render_template('ai-learning.html', csrf_token=session.get('csrf_token'))
+
+
+def add_morphology_to_words(words):
+    """為單字列表添加構詞分析資訊"""
+    if not words:
+        return words
+
+    try:
+        morphology_db = MorphologyDatabase(DB_NAME)
+        for word in words:
+            morphology = morphology_db.get_word_morphology(word['id'])
+            word['morphology'] = morphology
+    except Exception as e:
+        logging.error(f"添加構詞分析失敗: {e}")
+        # 如果失敗，確保每個單字都有空的 morphology 字段
+        for word in words:
+            if 'morphology' not in word:
+                word['morphology'] = None
+
+    return words
+
+
 @app.route('/api/words', methods=['GET'])
 def get_words():
     """取得單字，支援分頁與搜尋（使用 FTS5 優先，否則使用 LIKE 回退）。
@@ -503,10 +568,13 @@ def get_words():
             cursor.execute(count_sql, tuple(count_params))
             total = cursor.fetchone()['cnt']
 
-            data_sql = f"SELECT w.id, w.english, w.chinese, w.folder, w.error_count, w.created_at FROM words w JOIN words_fts f ON f.rowid = w.id WHERE {where_clause} AND words_fts MATCH ? ORDER BY w.folder, w.english LIMIT ? OFFSET ?"
+            data_sql = f"SELECT w.id, w.english, w.chinese, w.folder, w.error_count FROM words w JOIN words_fts f ON f.rowid = w.id WHERE {where_clause} AND words_fts MATCH ? ORDER BY w.folder, w.english LIMIT ? OFFSET ?"
             data_params = params + [match_expr, limit, offset]
             cursor.execute(data_sql, tuple(data_params))
             words = [dict(row) for row in cursor.fetchall()]
+
+            # 添加構詞分析資訊
+            words = add_morphology_to_words(words)
 
             resp = jsonify({'page': page, 'limit': limit, 'total': total, 'words': words})
             resp.headers['Cache-Control'] = 'public, max-age=30'
@@ -526,10 +594,13 @@ def get_words():
     total = cursor.fetchone()['cnt']
 
     # Select only necessary columns
-    data_sql = f"SELECT id, english, chinese, folder, error_count, created_at FROM words {where_clause} ORDER BY folder, english LIMIT ? OFFSET ?"
+    data_sql = f"SELECT id, english, chinese, folder, error_count FROM words {where_clause} ORDER BY folder, english LIMIT ? OFFSET ?"
     data_params = params + [limit, offset]
     cursor.execute(data_sql, tuple(data_params))
     words = [dict(row) for row in cursor.fetchall()]
+
+    # 添加構詞分析資訊
+    words = add_morphology_to_words(words)
 
     resp = jsonify({'page': page, 'limit': limit, 'total': total, 'words': words})
     resp.headers['Cache-Control'] = 'public, max-age=30'
@@ -848,10 +919,704 @@ def import_csv():
     return jsonify({'success': True, 'added': added, 'skipped': skipped, 'errors': errors})
 
 
+# ------------------ 構詞分析 API ------------------
+
+@app.route('/api/morphology/analyze/<int:word_id>', methods=['GET'])
+def api_morphology_analyze(word_id):
+    """取得單字的構詞分析"""
+    try:
+        conn = get_db()
+        morphology_db = MorphologyDatabase(DB_NAME)
+
+        # 檢查單字是否存在
+        cursor = conn.execute("SELECT english FROM words WHERE id = ?", (word_id,))
+        word_row = cursor.fetchone()
+
+        if not word_row:
+            return jsonify({'error': '單字不存在'}), 404
+
+        # 取得構詞分析
+        analysis = morphology_db.get_word_morphology(word_id)
+
+        if not analysis:
+            # 如果沒有分析資料，進行分析
+            english_word = word_row['english']
+            success = morphology_db.analyze_and_store_word(word_id, english_word)
+            if success:
+                analysis = morphology_db.get_word_morphology(word_id)
+
+        return jsonify({
+            'success': True,
+            'word_id': word_id,
+            'word': word_row['english'],
+            'morphology': analysis or {}
+        })
+
+    except Exception as e:
+        logging.error(f"構詞分析失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/morphology/groups', methods=['GET'])
+def api_morphology_groups():
+    """取得字首字尾群組列表"""
+    try:
+        morphology_db = MorphologyDatabase(DB_NAME)
+        conn = get_db()
+
+        # 取得群組統計
+        cursor = conn.execute("""
+            SELECT affix, affix_type, meaning, word_count
+            FROM morphology_groups
+            WHERE word_count > 0
+            ORDER BY word_count DESC, affix
+            LIMIT 100
+        """)
+
+        groups = []
+        for row in cursor.fetchall():
+            groups.append({
+                'affix': row['affix'],
+                'type': row['affix_type'],
+                'meaning': row['meaning'],
+                'word_count': row['word_count'],
+                'display': f"-{row['affix']}" if row['affix_type'] == 'suffix' else f"{row['affix']}-"
+            })
+
+        return jsonify({
+            'success': True,
+            'groups': groups
+        })
+
+    except Exception as e:
+        logging.error(f"取得構詞群組失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/morphology/groups/<affix>/words', methods=['GET'])
+def api_morphology_group_words(affix):
+    """取得特定字首字尾群組的單字列表"""
+    try:
+        affix_type = request.args.get('type', 'prefix')  # 'prefix' 或 'suffix'
+        page = int(request.args.get('page', 1))
+        per_page = min(int(request.args.get('per_page', 20)), 100)
+        offset = (page - 1) * per_page
+
+        # 取得當前用戶（如果有登入）
+        user_id = get_current_user()
+
+        morphology_db = MorphologyDatabase(DB_NAME)
+        conn = get_db()
+
+        # 構建查詢
+        if affix_type == 'prefix':
+            base_query = """
+                SELECT w.id, w.english, w.chinese, w.folder, w.part_of_speech, w.error_count
+                FROM words w
+                JOIN word_morphology wm ON w.id = wm.word_id
+                WHERE wm.prefix = ?
+            """
+            count_query = """
+                SELECT COUNT(*)
+                FROM words w
+                JOIN word_morphology wm ON w.id = wm.word_id
+                WHERE wm.prefix = ?
+            """
+        else:
+            base_query = """
+                SELECT w.id, w.english, w.chinese, w.folder, w.part_of_speech, w.error_count
+                FROM words w
+                JOIN word_morphology wm ON w.id = wm.word_id
+                WHERE wm.suffix = ?
+            """
+            count_query = """
+                SELECT COUNT(*)
+                FROM words w
+                JOIN word_morphology wm ON w.id = wm.word_id
+                WHERE wm.suffix = ?
+            """
+
+        params = [affix]
+
+        # 如果用戶已登入，只顯示其單字
+        if user_id:
+            base_query += " AND w.owner_id = ?"
+            count_query += " AND w.owner_id = ?"
+            params.append(user_id)
+
+        # 取得總數
+        cursor = conn.execute(count_query, params)
+        total = cursor.fetchone()[0]
+
+        # 取得分頁資料
+        base_query += " ORDER BY w.english LIMIT ? OFFSET ?"
+        params.extend([per_page, offset])
+
+        cursor = conn.execute(base_query, params)
+        words = []
+
+        for row in cursor.fetchall():
+            words.append({
+                'id': row['id'],
+                'english': row['english'],
+                'chinese': row['chinese'],
+                'folder': row['folder'],
+                'part_of_speech': row['part_of_speech'],
+                'error_count': row['error_count']
+            })
+
+        return jsonify({
+            'success': True,
+            'affix': affix,
+            'type': affix_type,
+            'words': words,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total,
+                'pages': (total + per_page - 1) // per_page
+            }
+        })
+
+    except Exception as e:
+        logging.error(f"取得群組單字失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/morphology/batch-analyze', methods=['POST'])
+def api_morphology_batch_analyze():
+    """批量分析所有單字的構詞結構"""
+    if not require_auth():
+        return jsonify({'error': '需要登入'}), 401
+
+    try:
+        user_id = get_current_user()
+        morphology_db = MorphologyDatabase(DB_NAME)
+
+        # 建立構詞分析表格
+        morphology_db.create_morphology_tables()
+
+        # 批量分析單字
+        morphology_db.batch_analyze_all_words(user_id)
+
+        return jsonify({
+            'success': True,
+            'message': '批量分析完成'
+        })
+
+    except Exception as e:
+        logging.error(f"批量分析失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/morphology/search', methods=['GET'])
+def api_morphology_search():
+    """搜尋單字並包含構詞分析"""
+    try:
+        keyword = request.args.get('q', '').strip()
+        include_morphology = request.args.get('morphology', 'true').lower() == 'true'
+        page = int(request.args.get('page', 1))
+        per_page = min(int(request.args.get('per_page', 20)), 100)
+
+        if not keyword:
+            return jsonify({'error': '請提供搜尋關鍵字'}), 400
+
+        user_id = get_current_user()
+        conn = get_db()
+
+        # 構建查詢
+        base_query = """
+            SELECT w.id, w.english, w.chinese, w.folder, w.part_of_speech, w.error_count
+            FROM words w
+            WHERE (w.english LIKE ? OR w.chinese LIKE ?)
+        """
+
+        count_query = """
+            SELECT COUNT(*)
+            FROM words w
+            WHERE (w.english LIKE ? OR w.chinese LIKE ?)
+        """
+
+        search_pattern = f"%{keyword}%"
+        params = [search_pattern, search_pattern]
+
+        # 如果用戶已登入，只搜尋其單字
+        if user_id:
+            base_query += " AND w.owner_id = ?"
+            count_query += " AND w.owner_id = ?"
+            params.append(user_id)
+
+        # 取得總數
+        cursor = conn.execute(count_query, params)
+        total = cursor.fetchone()[0]
+
+        # 取得分頁資料
+        offset = (page - 1) * per_page
+        base_query += " ORDER BY w.english LIMIT ? OFFSET ?"
+        params.extend([per_page, offset])
+
+        cursor = conn.execute(base_query, params)
+        results = []
+
+        morphology_db = MorphologyDatabase(DB_NAME) if include_morphology else None
+
+        for row in cursor.fetchall():
+            word_data = {
+                'id': row['id'],
+                'english': row['english'],
+                'chinese': row['chinese'],
+                'folder': row['folder'],
+                'part_of_speech': row['part_of_speech'],
+                'error_count': row['error_count']
+            }
+
+            # 如果需要構詞分析
+            if include_morphology and morphology_db:
+                morphology = morphology_db.get_word_morphology(row['id'])
+                word_data['morphology'] = morphology
+
+            results.append(word_data)
+
+        return jsonify({
+            'success': True,
+            'keyword': keyword,
+            'results': results,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total,
+                'pages': (total + per_page - 1) // per_page
+            }
+        })
+
+    except Exception as e:
+        logging.error(f"構詞搜尋失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/study/morphology-session', methods=['POST'])
+def api_create_morphology_session():
+    """創建構詞學習會話"""
+    if not require_auth():
+        return jsonify({'error': '需要登入'}), 401
+
+    try:
+        data = request.get_json() or {}
+        affix = data.get('affix')
+        affix_type = data.get('type', 'prefix')
+        limit = min(int(data.get('limit', 10)), 50)
+
+        if not affix:
+            return jsonify({'error': '請指定字首或字尾'}), 400
+
+        user_id = get_current_user()
+        morphology_db = MorphologyDatabase(DB_NAME)
+
+        # 取得該字首字尾的單字
+        words = morphology_db.get_words_by_affix(affix, affix_type, user_id)
+
+        if not words:
+            return jsonify({'error': '找不到相關單字'}), 404
+
+        # 隨機選擇部分單字
+        if len(words) > limit:
+            import random
+            words = random.sample(words, limit)
+
+        session_id = secrets.token_urlsafe(16)
+
+        # 儲存會話資訊到 Flask session
+        session[f'morphology_session_{session_id}'] = {
+            'affix': affix,
+            'type': affix_type,
+            'words': words,
+            'current_index': 0,
+            'correct_count': 0,
+            'created_at': datetime.now().isoformat()
+        }
+
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'affix': affix,
+            'type': affix_type,
+            'total_words': len(words),
+            'current_word': words[0] if words else None
+        })
+
+    except Exception as e:
+        logging.error(f"創建構詞學習會話失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/study/morphology-session/<session_id>/review', methods=['PUT'])
+def api_review_morphology_session(session_id):
+    """構詞學習評分"""
+    if not require_auth():
+        return jsonify({'error': '需要登入'}), 401
+
+    try:
+        data = request.get_json() or {}
+        correct = data.get('correct', False)
+
+        session_key = f'morphology_session_{session_id}'
+        session_data = session.get(session_key)
+
+        if not session_data:
+            return jsonify({'error': '學習會話不存在或已過期'}), 404
+
+        current_index = session_data['current_index']
+        words = session_data['words']
+
+        if current_index >= len(words):
+            return jsonify({'error': '學習會話已完成'}), 400
+
+        # 更新統計
+        if correct:
+            session_data['correct_count'] += 1
+
+        # 移到下一個單字
+        session_data['current_index'] += 1
+        session[session_key] = session_data
+
+        # 檢查是否完成
+        completed = session_data['current_index'] >= len(words)
+        next_word = None if completed else words[session_data['current_index']]
+
+        result = {
+            'success': True,
+            'correct': correct,
+            'current_index': session_data['current_index'],
+            'total_words': len(words),
+            'correct_count': session_data['correct_count'],
+            'completed': completed,
+            'next_word': next_word
+        }
+
+        if completed:
+            accuracy = session_data['correct_count'] / len(words) * 100
+            result['final_stats'] = {
+                'total': len(words),
+                'correct': session_data['correct_count'],
+                'accuracy': round(accuracy, 1)
+            }
+            # 清理會話
+            session.pop(session_key, None)
+
+        return jsonify(result)
+
+    except Exception as e:
+        logging.error(f"構詞學習評分失敗: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# =================
+# AI功能相關端點
+# =================
+
+@app.route('/api/ai/recommendations', methods=['GET'])
+@require_auth
+def get_learning_recommendations():
+    """獲取個性化學習建議"""
+    try:
+        user_id = get_current_user()['id']
+        limit = request.args.get('limit', 10, type=int)
+
+        recommendations = ai_service.get_recommendations(user_id, limit)
+
+        return jsonify({
+            'success': True,
+            'recommendations': recommendations,
+            'count': len(recommendations)
+        })
+
+    except Exception as e:
+        logger.error(f"獲取AI推薦失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/recommendations/<int:rec_id>/feedback', methods=['PUT'])
+@require_auth
+def recommendation_feedback(rec_id):
+    """用戶對推薦的反饋"""
+    try:
+        user_id = get_current_user()['id']
+        data = request.get_json()
+        accepted = data.get('accepted', False)
+
+        success = ai_service.feedback_recommendation(user_id, rec_id, accepted)
+
+        return jsonify({
+            'success': success,
+            'message': '感謝您的反饋！' if success else '反饋提交失敗'
+        })
+
+    except Exception as e:
+        logger.error(f"提交反饋失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/sentences/<int:word_id>', methods=['GET'])
+def get_ai_sentences(word_id):
+    """獲取單字的AI生成例句"""
+    try:
+        context = request.args.get('context')
+        limit = request.args.get('limit', 10, type=int)
+
+        sentences = ai_service.get_word_sentences(word_id, context, limit)
+
+        return jsonify({
+            'success': True,
+            'sentences': sentences,
+            'count': len(sentences)
+        })
+
+    except Exception as e:
+        logger.error(f"獲取AI例句失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/sentences/generate', methods=['POST'])
+@require_auth
+def generate_sentences():
+    """為指定單字生成新例句"""
+    try:
+        data = request.get_json()
+        word = data.get('word', '').strip()
+        difficulty = data.get('difficulty', 'medium')
+        context = data.get('context', 'daily')
+        count = data.get('count', 3)
+
+        if not word:
+            return jsonify({'success': False, 'error': '請提供要生成例句的單字'}), 400
+
+        sentences = ai_service.generate_sentences(word, difficulty, context, count)
+
+        return jsonify({
+            'success': True,
+            'sentences': sentences,
+            'count': len(sentences)
+        })
+
+    except Exception as e:
+        logger.error(f"生成AI例句失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/sentences/<int:sentence_id>/rate', methods=['PUT'])
+@require_auth
+def rate_sentence(sentence_id):
+    """用戶對例句評分"""
+    try:
+        data = request.get_json()
+        rating = data.get('rating', 0)
+
+        if not (1 <= rating <= 5):
+            return jsonify({'success': False, 'error': '評分必須在1-5之間'}), 400
+
+        success = ai_service.rate_sentence(sentence_id, rating)
+
+        return jsonify({
+            'success': success,
+            'message': '評分提交成功！' if success else '評分提交失敗'
+        })
+
+    except Exception as e:
+        logger.error(f"提交評分失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/translate/<int:word_id>', methods=['GET'])
+def get_ai_translations(word_id):
+    """獲取單字的智能翻譯解釋"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # 獲取單字資訊
+        cursor.execute("SELECT english FROM words WHERE id = ?", (word_id,))
+        word_row = cursor.fetchone()
+
+        if not word_row:
+            return jsonify({'success': False, 'error': '單字不存在'}), 404
+
+        word = word_row['english']
+        context = request.args.get('context')
+
+        translations = ai_service.translate_with_context(word, context)
+
+        return jsonify({
+            'success': True,
+            'translations': translations,
+            'word': word,
+            'count': len(translations)
+        })
+
+    except Exception as e:
+        logger.error(f"獲取AI翻譯失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/translate/context', methods=['POST'])
+def contextual_translation():
+    """基於上下文的智能翻譯"""
+    try:
+        data = request.get_json()
+        word = data.get('word', '').strip()
+        context = data.get('context', '').strip()
+
+        if not word:
+            return jsonify({'success': False, 'error': '請提供要翻譯的單字'}), 400
+
+        translations = ai_service.translate_with_context(word, context)
+
+        return jsonify({
+            'success': True,
+            'translations': translations,
+            'word': word,
+            'context': context
+        })
+
+    except Exception as e:
+        logger.error(f"上下文翻譯失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/chat/sessions', methods=['GET', 'POST'])
+@require_auth
+def manage_chat_sessions():
+    """管理聊天會話"""
+    try:
+        user_id = get_current_user()['id']
+
+        if request.method == 'GET':
+            # 獲取用戶的聊天會話列表
+            conn = get_db()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, session_name, created_at, last_active, total_messages
+                FROM chat_sessions
+                WHERE user_id = ?
+                ORDER BY last_active DESC
+            """, (user_id,))
+
+            sessions = []
+            for row in cursor.fetchall():
+                sessions.append({
+                    'id': row['id'],
+                    'session_name': row['session_name'],
+                    'created_at': row['created_at'],
+                    'last_active': row['last_active'],
+                    'total_messages': row['total_messages']
+                })
+
+            return jsonify({
+                'success': True,
+                'sessions': sessions,
+                'count': len(sessions)
+            })
+
+        elif request.method == 'POST':
+            # 建立新的聊天會話
+            data = request.get_json()
+            session_name = data.get('session_name', 'Learning Chat')
+
+            session_id = ai_service.create_chat_session(user_id, session_name)
+
+            if session_id:
+                return jsonify({
+                    'success': True,
+                    'session_id': session_id,
+                    'session_name': session_name
+                })
+            else:
+                return jsonify({'success': False, 'error': '建立聊天會話失敗'}), 500
+
+    except Exception as e:
+        logger.error(f"管理聊天會話失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/chat/<session_id>/messages', methods=['GET', 'POST'])
+@require_auth
+def chat_messages(session_id):
+    """發送消息和獲取回覆"""
+    try:
+        user_id = get_current_user()['id']
+
+        if request.method == 'GET':
+            # 獲取聊天歷史
+            limit = request.args.get('limit', 50, type=int)
+            messages = ai_service.get_chat_history(session_id, limit)
+
+            return jsonify({
+                'success': True,
+                'messages': messages,
+                'session_id': session_id
+            })
+
+        elif request.method == 'POST':
+            # 發送新訊息並獲取回覆
+            data = request.get_json()
+            user_message = data.get('message', '').strip()
+
+            if not user_message:
+                return jsonify({'success': False, 'error': '請輸入訊息'}), 400
+
+            # 驗證會話所有權
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM chat_sessions WHERE id = ?", (session_id,))
+            session_row = cursor.fetchone()
+
+            if not session_row or session_row['user_id'] != user_id:
+                return jsonify({'success': False, 'error': '無權訪問此聊天會話'}), 403
+
+            # 生成AI回應
+            response = ai_service.chat_response(session_id, user_message, user_id)
+
+            return jsonify({
+                'success': True,
+                'user_message': user_message,
+                'ai_response': response,
+                'session_id': session_id
+            })
+
+    except Exception as e:
+        logger.error(f"聊天訊息處理失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/stats', methods=['GET'])
+@require_auth
+def get_ai_stats():
+    """獲取AI服務統計信息"""
+    try:
+        stats = ai_service.get_ai_stats()
+
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+
+    except Exception as e:
+        logger.error(f"獲取AI統計失敗: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     # 初始化資料庫（在 app context 中執行）
     with app.app_context():
         init_db()
+
+        # 初始化構詞分析表格
+        try:
+            morphology_db = MorphologyDatabase(DB_NAME)
+            morphology_db.create_morphology_tables()
+            print("✅ 構詞分析表格已初始化")
+        except Exception as e:
+            print(f"⚠️  構詞分析表格初始化失敗: {e}")
 
     # 啟動伺服器
     print("🚀 伺服器啟動中...")
