@@ -16,6 +16,16 @@
         .controls{display:flex;gap:8px;align-items:center;margin-bottom:8px}
         .spinner{display:inline-block;width:18px;height:18px;border:3px solid rgba(255,255,255,0.08);border-top-color:var(--accent-1,#6C5CE7);border-radius:50%;animation:spin 1s linear infinite}
         @keyframes spin{to{transform:rotate(360deg)}}
+
+        /* Button styles */
+        .btn{border:0;padding:8px 12px;border-radius:8px;cursor:pointer;background:rgba(255,255,255,0.04);color:inherit}
+        .btn-primary{background:linear-gradient(90deg,#FF6B6B,#FF8E53);color:#fff;font-weight:700;box-shadow:0 6px 18px rgba(255,107,107,0.12);border-radius:10px}
+        .btn-secondary{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.03);color:#ddd}
+        .start-large{font-size:1rem;padding:12px 18px;border-radius:12px}
+
+        /* Make the primary start button more prominent on small screens */
+        .start-cta{display:flex;gap:8px;align-items:center}
+
         /* Responsive cards for narrow screens */
         @media (max-width:640px){
             .data-table thead{display:none}
@@ -23,6 +33,7 @@
             .data-table td{display:flex;justify-content:space-between;padding:6px 0;border:none}
             .controls{flex-direction:column;align-items:stretch}
             button{min-height:44px}
+            .start-large{width:100%;font-size:1.05rem}
         }
         /* Simple toast */
         .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#111;padding:10px 16px;border-radius:8px;color:#fff;box-shadow:0 6px 18px rgba(0,0,0,0.6)}
@@ -31,29 +42,29 @@
 <body>
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
         <h1>VocabMaster — 管理</h1>
-        <div style="display: flex; gap: 8px;">
+        <div style="display: flex; gap: 8px; align-items:center;">
             <a href="/morphology" style="color: #6C5CE7; text-decoration: none; padding: 8px 12px; background: rgba(108, 92, 231, 0.1); border-radius: 6px; border: 1px solid rgba(108, 92, 231, 0.3);">
                 🧩 構詞學習
             </a>
             <a href="/ai-learning" style="color: #FF6B6B; text-decoration: none; padding: 8px 12px; background: rgba(255, 107, 107, 0.1); border-radius: 6px; border: 1px solid rgba(255, 107, 107, 0.3);">
                 🤖 AI智慧學習
             </a>
+            <!-- Prominent global start button for quick access -->
+            <button id="globalStart" class="btn btn-primary start-large" style="margin-left:8px" aria-label="開始學習" title="開始學習 (快速)" onclick="loadFlashcards();">開始學習</button>
         </div>
     </div>
 
     <div class="card">
         <div class="controls">
-            <label>資料夾
-                <select id="mgmtFolder"><option value="all">全部資料夾</option></select>
-            </label>
+            <label for="mgmtFolder">資料夾</label>
+            <select id="mgmtFolder" aria-label="管理資料夾選單"><option value="all">全部資料夾</option></select>
             <div style="margin-left:auto" id="mgmtCount"></div>
             <div id="mgmtSpinner" style="display:none"><span class="spinner" aria-hidden="true"></span></div>
         </div>
 
         <div class="controls">
-            <label>頁面大小
-                <select id="mgmtPageSize"><option>10</option><option>20</option><option>50</option><option>100</option></select>
-            </label>
+            <label for="mgmtPageSize">頁面大小</label>
+        <select id="mgmtPageSize" aria-label="管理頁面大小"><option>10</option><option>20</option><option>50</option><option>100</option></select>
             <div>
                 <button id="mgmtPrev">Prev</button>
                 <span id="mgmtPageInfo"></span>
@@ -77,10 +88,18 @@
 
     <div class="card">
         <h2>Flashcards</h2>
-        <label>資料夾 <select id="fcFolder"><option value="all">全部</option></select></label>
-        <button id="fcLoad">載入</button>
-        <button id="fcLoadDue">載入 Due 單字</button>
-        <div id="fcSpinner" style="display:none"><span class="spinner" aria-hidden="true"></span></div>
+        <label for="fcFolder">資料夾</label>
+        <select id="fcFolder" aria-label="Flashcards 資料夾選單"><option value="all">全部</option></select>
+        <div class="start-cta" style="margin-top:8px">
+            <!-- Primary, highly visible start button -->
+            <button id="fcStart" class="btn btn-primary start-large" aria-label="開始學習 (該資料夾)">開始學習</button>
+            <!-- Secondary actions kept smaller and less prominent -->
+            <div style="display:flex;gap:8px;align-items:center">
+                <button id="fcLoad" class="btn btn-secondary">載入</button>
+                <button id="fcLoadDue" class="btn btn-secondary">載入 Due 單字</button>
+            </div>
+        </div>
+        <div id="fcSpinner" style="display:none;margin-top:8px"><span class="spinner" aria-hidden="true"></span></div>
         <div id="fcArea" style="margin-top:8px"></div>
     </div>
 
@@ -245,6 +264,14 @@
     // Flashcards load
     document.getElementById('fcLoad').addEventListener('click', loadFlashcards);
     document.getElementById('fcLoadDue').addEventListener('click', loadDueFlashcards);
+    // Hook new primary start button
+    document.getElementById('fcStart').addEventListener('click', ()=>{
+        // visual affordance: briefly pulse spinner then load
+        const btn = document.getElementById('fcStart'); btn.disabled = true; btn.style.opacity = 0.9;
+        loadFlashcards().finally(()=>{ btn.disabled = false; btn.style.opacity = 1; });
+    });
+    // Global start in header already calls loadFlashcards via inline onclick
+
     let flashWords = [];
     let flashIndex = 0;
 
@@ -256,6 +283,8 @@
             flashWords = data.words || [];
             flashIndex = 0;
             renderFlashCard();
+            // focus the card area for keyboard users
+            document.getElementById('fcArea').focus && document.getElementById('fcArea').focus();
         }catch(err){ console.error(err); toast('載入 flashcards 失敗','error'); }
         finally{ spinner.style.display='none'; }
     }
@@ -279,12 +308,12 @@
         const w = flashWords[flashIndex];
         // show simple card with two action buttons
         area.innerHTML = `
-            <div style="padding:12px;border-radius:8px;background:rgba(255,255,255,0.02)">
+            <div style="padding:12px;border-radius:8px;background:rgba(255,255,255,0.02)" tabindex="0">
                 <div style="font-size:1.25rem;font-weight:600">${escapeHtml(w.english)}</div>
                 <div style="color:#B0B8C6;margin-top:6px">${escapeHtml(w.chinese)}</div>
-                <div style="margin-top:8px">
-                    <button id="btnKnown">我知道</button>
-                    <button id="btnUnknown">我不會</button>
+                <div style="margin-top:8px;display:flex;gap:8px">
+                    <button id="btnKnown" class="btn btn-secondary">我知道</button>
+                    <button id="btnUnknown" class="btn btn-danger">我不會</button>
                 </div>
                 <div style="margin-top:8px;color:#888;font-size:0.85rem">第 ${flashIndex+1} / ${flashWords.length}</div>
             </div>
