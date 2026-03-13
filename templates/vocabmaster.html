@@ -88,16 +88,14 @@
 
     <div class="card">
         <h2>Flashcards</h2>
-        <label for="fcFolder">資料夾</label>
-        <select id="fcFolder" aria-label="Flashcards 資料夾選單"><option value="all">全部</option></select>
-        <div class="start-cta" style="margin-top:8px">
-            <!-- Primary, highly visible start button -->
-            <button id="fcStart" class="btn btn-primary start-large" aria-label="開始學習 (該資料夾)">開始學習</button>
-            <!-- Secondary actions kept smaller and less prominent -->
-            <div style="display:flex;gap:8px;align-items:center">
-                <button id="fcLoad" class="btn btn-secondary">載入</button>
-                <button id="fcLoadDue" class="btn btn-secondary">載入 Due 單字</button>
-            </div>
+        <div id="todayStudy" style="margin-top:6px">
+            <small id="fcHelper" style="color:#aaa;display:block;margin-bottom:6px">選擇方向後開始學習（點擊「開始學習」以顯示選項）</small>
+            <button id="fcStart" class="btn btn-primary start-large" aria-label="開始學習">開始學習</button>
+            <select id="fcFolder" aria-label="Flashcards 資料夾選單" style="display:none;margin-left:8px"></select>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+            <button id="fcLoad" class="btn btn-secondary">載入</button>
+            <button id="fcLoadDue" class="btn btn-secondary">載入 Due 單字</button>
         </div>
         <div id="fcSpinner" style="display:none;margin-top:8px"><span class="spinner" aria-hidden="true"></span></div>
         <div id="fcArea" style="margin-top:8px"></div>
@@ -265,12 +263,31 @@
     document.getElementById('fcLoad').addEventListener('click', loadFlashcards);
     document.getElementById('fcLoadDue').addEventListener('click', loadDueFlashcards);
     // Hook new primary start button
-    document.getElementById('fcStart').addEventListener('click', ()=>{
-        // visual affordance: briefly pulse spinner then load
-        const btn = document.getElementById('fcStart'); btn.disabled = true; btn.style.opacity = 0.9;
-        loadFlashcards().finally(()=>{ btn.disabled = false; btn.style.opacity = 1; });
+    document.getElementById('fcStart').addEventListener('click', async ()=>{
+        const btn = document.getElementById('fcStart');
+        const sel = document.getElementById('fcFolder');
+        const helper = document.getElementById('fcHelper');
+        // If select is hidden, show options and populate
+        if (sel && sel.style.display === 'none') {
+            if (helper) helper.textContent = '選擇資料夾後點擊開始學習';
+            sel.style.display = 'inline-block';
+            try {
+                await loadFolderSelect('fcFolder');
+                sel.focus();
+            } catch (e) {
+                console.error(e); toast('載入資料夾失敗','error');
+            }
+            return;
+        }
+        // Otherwise start learning with selected folder
+        btn.disabled = true; btn.style.opacity = 0.9;
+        try {
+            await loadFlashcards();
+        } finally {
+            btn.disabled = false; btn.style.opacity = 1;
+        }
     });
-    // Global start in header already calls loadFlashcards via inline onclick
+    // Global start in header still calls loadFlashcards via inline onclick
 
     let flashWords = [];
     let flashIndex = 0;
@@ -336,7 +353,7 @@
 
 
     // Init
-    (async function(){ await loadFolderSelect('mgmtFolder'); await loadFolderSelect('fcFolder'); document.getElementById('mgmtPageSize').value='10'; mgmtState.limit = 10; loadManagement(); })();
+    (async function(){ await loadFolderSelect('mgmtFolder'); /* Do not auto-populate fcFolder to keep it empty until user clicks start */ document.getElementById('mgmtPageSize').value='10'; mgmtState.limit = 10; loadManagement(); })();
     </script>
 </body>
 </html>
