@@ -269,11 +269,22 @@
         const helper = document.getElementById('fcHelper');
         // If select is hidden, show options and populate
         if (sel && sel.style.display === 'none') {
-            if (helper) helper.textContent = '選擇資料夾後點擊開始學習';
+            if (helper) helper.textContent = '選擇資料夾後開始學習';
             sel.style.display = 'inline-block';
             try {
                 await loadFolderSelect('fcFolder');
                 sel.focus();
+                // attach a one-time change handler to auto-start when user selects
+                const onChange = async function(){
+                    try{
+                        // hide helper and start
+                        if (helper) helper.textContent = '';
+                        await loadFlashcards();
+                    }catch(e){ console.error(e); toast('載入 flashcards 失敗','error'); }
+                    // remove this handler after triggered
+                    sel.removeEventListener('change', onChange);
+                };
+                sel.addEventListener('change', onChange);
             } catch (e) {
                 console.error(e); toast('載入資料夾失敗','error');
             }
