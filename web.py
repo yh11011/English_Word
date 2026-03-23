@@ -231,6 +231,7 @@ def ensure_user_columns(conn):
         'avatar_url':      'avatar_url TEXT',
         'learning_goal':   'learning_goal TEXT',
         'onboarding_done': 'onboarding_done INTEGER DEFAULT 0',
+        'username':        'username TEXT',
     }
     for col, defn in new_cols.items():
         if col not in cols:
@@ -519,18 +520,24 @@ def ensure_session_csrf():
 @app.route('/auth/register', methods=['POST'])
 def auth_register():
     data = request.get_json(silent=True) or {}
-    email = (data.get('email') or '').strip().lower()
+    username = (data.get('username') or '').strip()
     password = data.get('password') or ''
-    if not email or not password:
-        return jsonify({'success': False, 'message': 'email and password required'}), 400
+    if not username or not password:
+        return jsonify({'success': False, 'message': '請填寫暱稱和密碼'}), 400
+    if len(username) < 2:
+        return jsonify({'success': False, 'message': '暱稱至少需要 2 個字元'}), 400
+    if len(password) < 6:
+        return jsonify({'success': False, 'message': '密碼至少需要 6 個字元'}), 400
     conn = get_db()
     cur = conn.cursor()
-    # check exists
-    cur.execute('SELECT id FROM users WHERE email = ?', (email,))
+    cur.execute('SELECT id FROM users WHERE username = ?', (username,))
     if cur.fetchone():
-        return jsonify({'success': False, 'message': 'user already exists'}), 400
+        return jsonify({'success': False, 'message': '此暱稱已被使用，請換一個'}), 400
     pw_hash = generate_password_hash(password)
-    cur.execute('INSERT INTO users (email, password_hash) VALUES (?, ?)', (email, pw_hash))
+    cur.execute(
+        'INSERT INTO users (username, display_name, password_hash) VALUES (?, ?, ?)',
+        (username, username, pw_hash)
+    )
     conn.commit()
     user_id = cur.lastrowid
     session['user_id'] = user_id
@@ -540,16 +547,16 @@ def auth_register():
 @app.route('/auth/login', methods=['POST'])
 def auth_login():
     data = request.get_json(silent=True) or {}
-    email = (data.get('email') or '').strip().lower()
+    username = (data.get('username') or '').strip()
     password = data.get('password') or ''
-    if not email or not password:
-        return jsonify({'success': False, 'message': 'email and password required'}), 400
+    if not username or not password:
+        return jsonify({'success': False, 'message': '請填寫暱稱和密碼'}), 400
     conn = get_db()
     cur = conn.cursor()
-    cur.execute('SELECT * FROM users WHERE email = ?', (email,))
+    cur.execute('SELECT * FROM users WHERE username = ?', (username,))
     row = cur.fetchone()
-    if not row or not check_password_hash(row['password_hash'], password):
-        return jsonify({'success': False, 'message': 'invalid credentials'}), 401
+    if not row or not row['password_hash'] or not check_password_hash(row['password_hash'], password):
+        return jsonify({'success': False, 'message': '暱稱或密碼錯誤'}), 401
     session['user_id'] = row['id']
     return jsonify({'success': True, 'id': row['id']})
 
@@ -619,6 +626,17 @@ def change_password():
     return jsonify({'success': True})
 
 
+@app.route('/auth/link/<provider>')
+@require_auth
+def auth_link(provider):
+    """Start OAuth flow to link a provider to an existing account."""
+    if provider not in ('google', 'github'):
+        return jsonify({'error': 'unknown provider'}), 400
+    # Store the current user_id so callback knows to link, not create
+    session['link_user_id'] = session.get('user_id')
+    return redirect(f'/auth/{provider}')
+
+
 @app.route('/auth/google')
 def auth_google():
     if not GOOGLE_CLIENT_ID:
@@ -665,6 +683,16 @@ def auth_google_callback():
         name  = profile.get('name', '')
         avatar = profile.get('picture', '')
         conn = get_db()
+        link_uid = session.pop('link_user_id', None)
+        if link_uid:
+            # Link provider to existing account
+            cur = conn.cursor()
+            cur.execute('INSERT OR IGNORE INTO oauth_accounts (user_id, provider, provider_id, email) VALUES (?,?,?,?)',
+                        (link_uid, 'google', provider_id, email))
+            cur.execute('UPDATE users SET avatar_url=COALESCE(avatar_url,?) WHERE id=?', (avatar, link_uid))
+            conn.commit()
+            session['user_id'] = link_uid
+            return redirect('/?linked=google')
         user_id, _ = _oauth_upsert_user(conn, 'google', provider_id, email, name, avatar)
         session['user_id'] = user_id
         return redirect('/?oauth=1')
@@ -720,6 +748,15 @@ def auth_github_callback():
         name   = profile.get('name') or profile.get('login', '')
         avatar = profile.get('avatar_url', '')
         conn = get_db()
+        link_uid = session.pop('link_user_id', None)
+        if link_uid:
+            cur = conn.cursor()
+            cur.execute('INSERT OR IGNORE INTO oauth_accounts (user_id, provider, provider_id, email) VALUES (?,?,?,?)',
+                        (link_uid, 'github', provider_id, email))
+            cur.execute('UPDATE users SET avatar_url=COALESCE(avatar_url,?) WHERE id=?', (avatar, link_uid))
+            conn.commit()
+            session['user_id'] = link_uid
+            return redirect('/?linked=github')
         user_id, _ = _oauth_upsert_user(conn, 'github', provider_id, email, name, avatar)
         session['user_id'] = user_id
         return redirect('/?oauth=1')

@@ -700,13 +700,18 @@ const ob = {
 async function initOnboarding() {
   // Check URL params from OAuth redirect
   const params = new URLSearchParams(location.search);
-  const oauthDone = params.get('oauth') === '1';
-  const authError = params.get('auth_error');
-  if (oauthDone || authError) {
+  const oauthDone  = params.get('oauth') === '1';
+  const linkedProv = params.get('linked'); // 'google' | 'github'
+  const authError  = params.get('auth_error');
+  if (oauthDone || linkedProv || authError) {
     history.replaceState(null, '', '/');
   }
   if (authError) {
     toast('登入失敗：' + decodeURIComponent(authError), 'error');
+  }
+  if (linkedProv) {
+    const label = linkedProv === 'google' ? 'Google' : 'GitHub';
+    toast(`已成功綁定 ${label} 帳號`, 'success');
   }
 
   try {
@@ -744,7 +749,7 @@ function initOnboardingUI() {
 
   // Auth step: email submit
   document.getElementById('ob-email-submit')?.addEventListener('click', doEmailAuth);
-  document.getElementById('ob-email')?.addEventListener('keydown', e => { if (e.key === 'Enter') doEmailAuth(); });
+  document.getElementById('ob-username')?.addEventListener('keydown', e => { if (e.key === 'Enter') doEmailAuth(); });
   document.getElementById('ob-password')?.addEventListener('keydown', e => { if (e.key === 'Enter') doEmailAuth(); });
 
   // Skip
@@ -806,15 +811,16 @@ function renderGoalGrid() {
 }
 
 async function doEmailAuth() {
-  const email    = document.getElementById('ob-email').value.trim();
+  const username = document.getElementById('ob-username').value.trim();
   const password = document.getElementById('ob-password').value;
   const errEl    = document.getElementById('ob-email-error');
-  if (!email || !password) { showObError('請填寫帳號和密碼'); return; }
+  if (!username || !password) { showObError('請填寫暱稱和密碼'); return; }
   const btn = document.getElementById('ob-email-submit');
   btn.disabled = true;
+  btn.classList.add('btn-loading');
   try {
     const url = ob.mode === 'login' ? '/auth/login' : '/auth/register';
-    const data = await apiPost(url, { email, password });
+    const data = await apiPost(url, { username, password });
     if (!data.success) { showObError(data.message || '失敗'); return; }
     ob.user = await apiGet('/auth/me').then(d => d.user);
     errEl.style.display = 'none';
@@ -824,6 +830,7 @@ async function doEmailAuth() {
     showObError(e.message);
   } finally {
     btn.disabled = false;
+    btn.classList.remove('btn-loading');
   }
 }
 
@@ -866,12 +873,12 @@ function openAccountSheet() {
     loggedIn.style.display = '';
     guestEl.style.display  = 'none';
     // Fill in details
-    const name   = ob.user.display_name || ob.user.email?.split('@')[0] || '用戶';
-    const email  = ob.user.email || '';
-    const goal   = ob.user.learning_goal || '未設定';
+    const name    = ob.user.display_name || ob.user.username || '用戶';
+    const sub     = ob.user.username ? `@${ob.user.username}` : '';
+    const goal    = ob.user.learning_goal || '未設定';
     const initials = (name[0] || '?').toUpperCase();
     document.getElementById('account-name').textContent  = name;
-    document.getElementById('account-email').textContent = email;
+    document.getElementById('account-email').textContent = sub;
     document.getElementById('account-goal').textContent  = goal;
     document.getElementById('account-initial').textContent = initials;
     if (ob.user.avatar_url) {
@@ -879,19 +886,21 @@ function openAccountSheet() {
     } else {
       document.getElementById('account-avatar').innerHTML = `<span id="account-initial">${initials}</span>`;
     }
-    // OAuth provider tags
+    // OAuth provider tags — show linked providers + link buttons for unlinked
     const tags = document.getElementById('provider-tags');
     tags.innerHTML = '';
-    const allProviders = ['google', 'github'];
     const linked = ob.user.oauth_providers || [];
-    allProviders.forEach(p => {
-      const tag = document.createElement(linked.includes(p) ? 'span' : 'button');
-      tag.className = 'provider-tag' + (linked.includes(p) ? '' : ' provider-tag-pending');
-      tag.textContent = (linked.includes(p) ? '✓ ' : '+ ') + (p === 'google' ? 'Google' : 'GitHub');
-      if (!linked.includes(p)) {
-        tag.addEventListener('click', () => { location.href = `/auth/${p}`; });
-      }
-      tags.appendChild(tag);
+    const providerLabel = { google: 'Google', github: 'GitHub' };
+    linked.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'provider-linked';
+      row.innerHTML = `<svg class="provider-linked-icon" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>${providerLabel[p] || p} 已連結`;
+      tags.appendChild(row);
+    });
+    // Show link buttons for unlinked providers
+    ['google', 'github'].forEach(p => {
+      const btn = document.getElementById(`link-${p}-btn`);
+      if (btn) btn.style.display = linked.includes(p) ? 'none' : 'flex';
     });
     // Change password section
     document.getElementById('change-pw-section').style.display = ob.user.has_password ? '' : 'none';
