@@ -74,6 +74,7 @@ const state = {
 // ── Router (tabs) ─────────────────────────────────────────────
 function switchTab(tab) {
   state.tab = tab;
+  try { sessionStorage.setItem('vm_tab', tab); } catch {}
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${tab}`));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   if (tab === 'today')    renderToday();
@@ -614,6 +615,10 @@ function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ── Offline detection ─────────────────────────────────────────
+window.addEventListener('offline', () => toast('網路已中斷，部分功能可能無法使用', 'error', 0));
+window.addEventListener('online',  () => toast('網路已恢復連線', 'success', 2500));
+
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.nav-btn').forEach(btn =>
@@ -678,8 +683,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('guest-email-login-btn')?.addEventListener('click', () => { closeSheet(); document.getElementById('onboarding-overlay').classList.add('active'); showAuthStep(); });
   document.getElementById('save-pw-btn')?.addEventListener('click', saveNewPassword);
 
-  // Start app after onboarding check
-  initOnboarding().then(() => switchTab('today'));
+  // Start app after onboarding check — restore last tab if available
+  initOnboarding().then(() => {
+    const lastTab = sessionStorage.getItem('vm_tab');
+    switchTab(['today','practice','library'].includes(lastTab) ? lastTab : 'today');
+  });
 });
 
 // ── Onboarding ────────────────────────────────────────────────
@@ -939,9 +947,17 @@ function updateUserChip() {
     document.getElementById('sidebar-initial').textContent = initial;
     document.getElementById('mobile-initial').textContent  = initial;
     if (ob.user.avatar_url) {
-      const img = `<img src="${esc(ob.user.avatar_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
-      document.getElementById('sidebar-avatar').innerHTML = img;
-      document.getElementById('mobile-avatar-circle').innerHTML = img;
+      const makeImg = (id, fallbackInitial) => {
+        const img = new Image();
+        img.src = ob.user.avatar_url;
+        img.alt = '';
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+        img.onerror = () => { img.replaceWith(document.createTextNode(fallbackInitial)); };
+        document.getElementById(id).innerHTML = '';
+        document.getElementById(id).appendChild(img);
+      };
+      makeImg('sidebar-avatar', initial);
+      makeImg('mobile-avatar-circle', initial);
     }
   } else {
     const initial = '?';
