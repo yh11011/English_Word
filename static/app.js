@@ -732,14 +732,6 @@ async function initOnboarding() {
 }
 
 function initOnboardingUI() {
-  // Auth step: email toggle
-  document.getElementById('email-toggle')?.addEventListener('click', () => {
-    const wrap = document.getElementById('email-form-wrap');
-    const btn  = document.getElementById('email-toggle');
-    wrap.classList.toggle('open');
-    btn.classList.toggle('open');
-  });
-
   // Auth step: tabs (login / register)
   document.querySelectorAll('.ob-tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
