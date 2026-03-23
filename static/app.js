@@ -30,16 +30,28 @@ const apiPut    = (url, b) => api('PUT', url, b);
 const apiDelete = url => api('DELETE', url);
 
 // ── Toast ─────────────────────────────────────────────────────
-function toast(msg, type = 'info') {
+function toast(msg, type = 'info', duration = 3000) {
   const c = document.getElementById('toast-container');
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
-  el.textContent = msg;
+  // Error toasts are dismissible by click; longer duration
+  const d = type === 'error' ? Math.max(duration, 5000) : duration;
+  const inner = document.createElement('span');
+  inner.textContent = msg;
+  el.appendChild(inner);
+  // X dismiss button
+  const x = document.createElement('button');
+  x.className = 'toast-dismiss';
+  x.setAttribute('aria-label', '關閉');
+  x.textContent = '×';
+  x.onclick = () => { el.classList.add('fade-out'); el.addEventListener('animationend', () => el.remove(), { once: true }); };
+  el.appendChild(x);
   c.appendChild(el);
-  setTimeout(() => {
+  const tid = setTimeout(() => {
     el.classList.add('fade-out');
-    el.addEventListener('animationend', () => el.remove());
-  }, 2500);
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+  }, d);
+  el.addEventListener('click', () => clearTimeout(tid)); // clicking pauses auto-dismiss
 }
 
 // ── State ─────────────────────────────────────────────────────
@@ -71,6 +83,13 @@ function switchTab(tab) {
 
 // ── Today Tab ─────────────────────────────────────────────────
 async function renderToday() {
+  // Show loading placeholder if not yet loaded
+  if (!state.stats) {
+    ['streak-count','due-num','total-words-stat','folders-stat'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '…';
+    });
+  }
   try {
     const [stats, dueData] = await Promise.all([
       apiGet('/api/statistics'),
@@ -80,7 +99,7 @@ async function renderToday() {
     state.dueCount = dueData.total ?? (dueData.words?.length ?? 0);
     updateTodayUI();
   } catch (e) {
-    console.error('renderToday:', e);
+    toast('無法載入今日資料，請重新整理', 'error');
   }
 }
 
@@ -161,6 +180,7 @@ async function startSession() {
   const folderQ = folder ? `&folder=${encodeURIComponent(folder)}` : '';
   const startBtn = document.getElementById('practice-start-btn');
   startBtn.disabled = true;
+  startBtn.classList.add('btn-loading');
   try {
     const url = state.practiceMode === 'due'
       ? `/api/due?limit=200${folderQ}`
@@ -168,12 +188,13 @@ async function startSession() {
     const data = await apiGet(url);
     const words = data.words || [];
     if (!words.length) { toast('沒有可練習的單字', 'info'); return; }
-    state.session = { words, idx: 0, correct: 0, wrong: 0, flipped: false };
+    state.session = { words, idx: 0, correct: 0, wrong: 0, flipped: false, submitting: false };
     openSession();
   } catch (e) {
     toast(e.message, 'error');
   } finally {
     startBtn.disabled = false;
+    startBtn.classList.remove('btn-loading');
   }
 }
 
@@ -224,16 +245,25 @@ function flipCard() {
 
 async function submitReview(quality) {
   const sess = state.session;
-  if (!sess || !sess.flipped) return;
+  if (!sess || !sess.flipped || sess.submitting) return;
+  sess.submitting = true;
+  // Lock action buttons to prevent double-tap
+  document.getElementById('btn-unknown').disabled = true;
+  document.getElementById('btn-know').disabled = true;
   const word = sess.words[sess.idx];
   const fc = document.getElementById('flip-card');
   fc.classList.add(quality >= 3 ? 'tilt-right' : 'tilt-left');
   if (quality >= 3) sess.correct++; else sess.wrong++;
   apiPut(`/api/words/${word.id}/review`, { quality }).catch(e => console.warn('review:', e.message));
   setTimeout(() => {
+    sess.submitting = false;
     sess.idx++;
     if (sess.idx >= sess.words.length) showSummary();
-    else renderSessionCard();
+    else {
+      renderSessionCard();
+      document.getElementById('btn-unknown').disabled = false;
+      document.getElementById('btn-know').disabled = false;
+    }
   }, 260);
 }
 
@@ -405,32 +435,50 @@ async function openWordDetail(word) {
 
   const morphWrap = document.getElementById('detail-morph-wrap');
   const morphBadges = document.getElementById('detail-morph-badges');
-  morphWrap.classList.add('hidden');
-  morphBadges.innerHTML = '';
+  // Show skeleton while loading morphology
+  morphWrap.classList.remove('hidden');
+  morphBadges.innerHTML = '<span class="morph-loading"><span class="spinner" style="width:14px;height:14px;border-width:2px;vertical-align:middle"></span> 分析中…</span>';
 
   document.getElementById('detail-delete-btn').onclick = () => deleteWord(word.id);
   openSheet('word-detail-sheet');
 
   try {
     const m = await apiGet(`/api/morphology/analyze/${word.id}`);
+    morphBadges.innerHTML = '';
     if (m && (m.prefix || m.root || m.suffix)) {
-      morphWrap.classList.remove('hidden');
       if (m.prefix) morphBadges.innerHTML += `<span class="morph-badge morph-prefix">${esc(m.prefix)}</span>`;
       if (m.root)   morphBadges.innerHTML += `<span class="morph-badge morph-root">${esc(m.root)}</span>`;
       if (m.suffix) morphBadges.innerHTML += `<span class="morph-badge morph-suffix">${esc(m.suffix)}</span>`;
+    } else {
+      morphWrap.classList.add('hidden');
     }
-  } catch { /* optional */ }
+  } catch {
+    morphWrap.classList.add('hidden');
+  }
 }
 
 async function deleteWord(id) {
-  if (!confirm('確定要刪除這個單字嗎？')) return;
+  const word = state.libWords.find(w => w.id === id);
+  const ok = await showConfirm(`確定要刪除「${word?.english ?? id}」嗎？此操作無法復原。`, '確定刪除');
+  if (!ok) return;
   try {
     await apiDelete(`/api/words/${id}`);
     closeSheet();
     toast('已刪除', 'success');
-    state.libWords = state.libWords.filter(w => w.id !== id);
-    document.querySelector(`.word-item[data-id="${id}"]`)?.remove();
-    if (state.libWords.length === 0) renderWordList(true);
+    const item = document.querySelector(`.word-item[data-id="${id}"]`);
+    if (item) {
+      item.style.transition = 'opacity .2s, transform .2s';
+      item.style.opacity = '0';
+      item.style.transform = 'translateX(20px)';
+      setTimeout(() => {
+        item.remove();
+        state.libWords = state.libWords.filter(w => w.id !== id);
+        if (state.libWords.length === 0) renderWordList(true);
+      }, 200);
+    } else {
+      state.libWords = state.libWords.filter(w => w.id !== id);
+      if (state.libWords.length === 0) renderWordList(true);
+    }
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -493,6 +541,12 @@ function onSearchInput(e) {
   state.libSearch = e.target.value;
   document.getElementById('search-clear').classList.toggle('hidden', !state.libSearch);
   searchTimer = setTimeout(() => {
+    // Notify user if folder filter will be cleared
+    if (state.libSearch && state.libFolder !== 'all') {
+      toast(`搜尋範圍已切換為全部單字庫`, 'info', 2500);
+      state.libFolder = 'all';
+      document.querySelectorAll('#lib-folder-pills .pill').forEach((p, i) => p.classList.toggle('active', i === 0));
+    }
     state.libWords = []; state.libPage = 0; state.libHasMore = true;
     loadMoreWords(true);
   }, 320);
@@ -511,6 +565,27 @@ function setupInfiniteScroll() {
   document.getElementById('tab-library').addEventListener('scroll', () => {
     const el = document.getElementById('tab-library');
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) loadMoreWords(false);
+  });
+}
+
+// ── Confirm modal (replaces browser confirm()) ────────────────
+function showConfirm(body, okLabel = '確定') {
+  return new Promise(resolve => {
+    const modal = document.getElementById('confirm-modal');
+    document.getElementById('confirm-body').textContent = body;
+    document.getElementById('confirm-ok-btn').textContent = okLabel;
+    modal.classList.add('active');
+    const cleanup = ok => {
+      modal.classList.remove('active');
+      okBtn.replaceWith(okBtn.cloneNode(true));
+      cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+      resolve(ok);
+    };
+    const okBtn     = document.getElementById('confirm-ok-btn');
+    const cancelBtn = document.getElementById('confirm-cancel-btn');
+    okBtn.onclick     = () => cleanup(true);
+    cancelBtn.onclick = () => cleanup(false);
+    modal.onclick = e => { if (e.target === modal) cleanup(false); };
   });
 }
 

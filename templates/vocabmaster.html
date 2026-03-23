@@ -63,7 +63,7 @@
           <div class="streak-display">
             <span class="streak-icon">🔥</span>
             <div>
-              <div class="streak-count" id="streak-count">0</div>
+              <div class="streak-count" id="streak-count">…</div>
               <div class="streak-label">天連續學習</div>
             </div>
           </div>
@@ -264,6 +264,18 @@
 <!-- ══ SHEET BACKDROP ═════════════════════════════════════════ -->
 <div id="sheet-backdrop" class="sheet-backdrop"></div>
 
+<!-- ══ CONFIRM MODAL ══════════════════════════════════════════ -->
+<div id="confirm-modal" class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="confirm-card">
+    <div class="confirm-title" id="confirm-title">確認</div>
+    <div class="confirm-body" id="confirm-body"></div>
+    <div class="confirm-actions">
+      <button class="btn btn-secondary btn-sm" id="confirm-cancel-btn">取消</button>
+      <button class="btn btn-danger btn-sm" id="confirm-ok-btn">確定刪除</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- ══ WORD DETAIL SHEET ══════════════════════════════════════ -->
 <div id="word-detail-sheet" class="bottom-sheet">
@@ -399,9 +411,11 @@
             <button class="ob-tab-btn active" data-form="login">登入</button>
             <button class="ob-tab-btn" data-form="register">註冊</button>
           </div>
-          <input class="form-input" id="ob-email" type="email" placeholder="電子郵件" autocomplete="email">
-          <input class="form-input" id="ob-password" type="password" placeholder="密碼" autocomplete="current-password">
-          <div id="ob-email-error" class="text-sm" style="color:var(--danger);display:none"></div>
+          <label for="ob-email" class="sr-only">電子郵件</label>
+          <input class="form-input" id="ob-email" type="email" placeholder="電子郵件" autocomplete="email" required>
+          <label for="ob-password" class="sr-only">密碼</label>
+          <input class="form-input" id="ob-password" type="password" placeholder="密碼（至少 6 個字元）" autocomplete="current-password" required minlength="6">
+          <div id="ob-email-error" class="text-sm" style="color:var(--danger);display:none" role="alert"></div>
           <button class="btn btn-primary btn-full" id="ob-email-submit">登入</button>
         </div>
 
@@ -473,7 +487,9 @@
       <!-- Change password (email accounts only) -->
       <div class="account-section" id="change-pw-section" style="display:none">
         <div class="account-section-title">修改密碼</div>
-        <input class="form-input" id="new-password" type="password" placeholder="輸入新密碼">
+        <label for="new-password" class="sr-only">新密碼</label>
+        <input class="form-input" id="new-password" type="password" placeholder="輸入新密碼（至少 6 個字元）" minlength="6">
+        <label for="confirm-password" class="sr-only">確認新密碼</label>
         <input class="form-input" id="confirm-password" type="password" placeholder="確認新密碼">
         <button class="btn btn-secondary btn-sm" id="save-pw-btn">儲存新密碼</button>
       </div>
