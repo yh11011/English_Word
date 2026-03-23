@@ -1,370 +1,521 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <meta name="csrf-token" content="{{ csrf_token }}">
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VocabMaster (Simplified)</title>
-    <style>
-        /* Minimal styles for responsive management table and spinners */
-        body{font-family:system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; padding:16px; background:#0B0E14;color:#E8ECF4}
-        .card{background:rgba(255,255,255,0.03);padding:12px;border-radius:8px;margin-bottom:12px}
-        .data-table{width:100%;border-collapse:collapse}
-        .data-table th,.data-table td{padding:8px;border-bottom:1px solid rgba(255,255,255,0.03)}
-        .badge-folder{display:inline-block;padding:4px 8px;background:#222;border-radius:6px;color:#ddd;font-size:0.85rem}
-        .btn-danger{background:#FF5252;color:#fff;border:none;padding:6px 10px;border-radius:6px;cursor:pointer}
-        .controls{display:flex;gap:8px;align-items:center;margin-bottom:8px}
-        .spinner{display:inline-block;width:18px;height:18px;border:3px solid rgba(255,255,255,0.08);border-top-color:var(--accent-1,#6C5CE7);border-radius:50%;animation:spin 1s linear infinite}
-        @keyframes spin{to{transform:rotate(360deg)}}
-
-        /* Button styles */
-        .btn{border:0;padding:8px 12px;border-radius:8px;cursor:pointer;background:rgba(255,255,255,0.04);color:inherit}
-        .btn-primary{background:linear-gradient(90deg,#FF6B6B,#FF8E53);color:#fff;font-weight:700;box-shadow:0 6px 18px rgba(255,107,107,0.12);border-radius:10px}
-        .btn-secondary{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.03);color:#ddd}
-        .start-large{font-size:1rem;padding:12px 18px;border-radius:12px}
-
-        /* Make the primary start button more prominent on small screens */
-        .start-cta{display:flex;gap:8px;align-items:center}
-
-        /* Responsive cards for narrow screens */
-        @media (max-width:640px){
-            .data-table thead{display:none}
-            .data-table tr{display:block;margin-bottom:12px;border-radius:8px;background:rgba(255,255,255,0.02);padding:8px}
-            .data-table td{display:flex;justify-content:space-between;padding:6px 0;border:none}
-            .controls{flex-direction:column;align-items:stretch}
-            button{min-height:44px}
-            .start-large{width:100%;font-size:1.05rem}
-        }
-        /* Simple toast */
-        .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#111;padding:10px 16px;border-radius:8px;color:#fff;box-shadow:0 6px 18px rgba(0,0,0,0.6)}
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>VocabMaster</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-        <h1>VocabMaster — 管理</h1>
-        <div style="display: flex; gap: 8px; align-items:center;">
-            <a href="/morphology" style="color: #6C5CE7; text-decoration: none; padding: 8px 12px; background: rgba(108, 92, 231, 0.1); border-radius: 6px; border: 1px solid rgba(108, 92, 231, 0.3);">
-                🧩 構詞學習
-            </a>
-            <a href="/ai-learning" style="color: #FF6B6B; text-decoration: none; padding: 8px 12px; background: rgba(255, 107, 107, 0.1); border-radius: 6px; border: 1px solid rgba(255, 107, 107, 0.3);">
-                🤖 AI智慧學習
-            </a>
-            <!-- Prominent global start button for quick access -->
-            <button id="globalStart" class="btn btn-primary start-large" style="margin-left:8px" aria-label="開始學習" title="開始學習 (快速)" onclick="loadFlashcards();">開始學習</button>
-        </div>
+<div id="app">
+
+  <!-- ══ NAVIGATION (bottom on mobile, sidebar on desktop) ═════ -->
+  <nav class="app-nav">
+    <div class="nav-brand">
+      <svg class="nav-brand-icon" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span>VocabMaster</span>
     </div>
+    <div class="nav-links">
+      <button class="nav-btn active" data-tab="today">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span>今日</span>
+      </button>
+      <button class="nav-btn" data-tab="practice">
+        <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <span>練習</span>
+      </button>
+      <button class="nav-btn" data-tab="library">
+        <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        <span>單字庫</span>
+      </button>
+      <!-- Mobile-only account button (hidden on desktop where user-chip is used) -->
+      <button class="nav-btn nav-btn-account" id="mobile-account-btn" aria-label="帳號設定">
+        <div class="mobile-avatar" id="mobile-avatar-circle"><span id="mobile-initial">?</span></div>
+        <span>帳號</span>
+      </button>
+    </div>
+    <button class="nav-add-btn" id="nav-add-btn" aria-label="新增單字">
+      <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <span>新增單字</span>
+    </button>
+    <!-- User chip (desktop sidebar bottom) -->
+    <button class="user-chip" id="user-chip" aria-label="帳號設定">
+      <div class="avatar-circle" id="sidebar-avatar"><span id="sidebar-initial">?</span></div>
+      <div class="user-chip-info">
+        <div class="user-chip-name" id="sidebar-name">訪客</div>
+        <div class="user-chip-sub" id="sidebar-sub">點此登入 / 設定</div>
+      </div>
+    </button>
+  </nav>
 
-    <div class="card">
-        <div class="controls">
-            <label for="mgmtFolder">資料夾</label>
-            <select id="mgmtFolder" aria-label="管理資料夾選單"><option value="all">全部資料夾</option></select>
-            <div style="margin-left:auto" id="mgmtCount"></div>
-            <div id="mgmtSpinner" style="display:none"><span class="spinner" aria-hidden="true"></span></div>
-        </div>
+  <!-- Mobile account button is in nav-links above; hidden on desktop via CSS -->
 
-        <div class="controls">
-            <label for="mgmtPageSize">頁面大小</label>
-        <select id="mgmtPageSize" aria-label="管理頁面大小"><option>10</option><option>20</option><option>50</option><option>100</option></select>
+  <!-- ══ MAIN CONTENT ══════════════════════════════════════════ -->
+  <main class="app-main">
+
+    <!-- ── TODAY TAB ──────────────────────────────────────────── -->
+    <div id="tab-today" class="tab-panel">
+      <div class="today-layout">
+
+        <!-- Left / Top column: hero -->
+        <div class="today-hero">
+          <div class="streak-display">
+            <span class="streak-icon">🔥</span>
             <div>
-                <button id="mgmtPrev">Prev</button>
-                <span id="mgmtPageInfo"></span>
-                <button id="mgmtNext">Next</button>
+              <div class="streak-count" id="streak-count">0</div>
+              <div class="streak-label">天連續學習</div>
             </div>
-        </div>
+          </div>
 
-        <table class="data-table" aria-describedby="mgmtCount">
-            <thead>
-                <tr><th>英文</th><th>中文</th><th>資料夾</th><th>構詞</th><th>錯誤</th><th>操作</th></tr>
-            </thead>
-            <tbody id="mgmtTableBody"></tbody>
-        </table>
-    </div>
-
-    <div class="card">
-        <label for="searchInput">搜尋</label>
-        <input id="searchInput" autocomplete="off" aria-label="Search words" />
-        <div id="searchDropdown" role="listbox" aria-label="搜尋結果" style="display:none;background:#111;margin-top:8px;padding:8px;border-radius:6px;max-height:320px;overflow:auto"></div>
-    </div>
-
-    <div class="card">
-        <h2>Flashcards</h2>
-        <div id="todayStudy" style="margin-top:6px">
-            <small id="fcHelper" style="color:#aaa;display:block;margin-bottom:6px">選擇方向後開始學習（點擊「開始學習」以顯示選項）</small>
-            <button id="fcStart" class="btn btn-primary start-large" aria-label="開始學習">開始學習</button>
-            <select id="fcFolder" aria-label="Flashcards 資料夾選單" style="display:none;margin-left:8px"></select>
-        </div>
-        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
-            <button id="fcLoad" class="btn btn-secondary">載入</button>
-            <button id="fcLoadDue" class="btn btn-secondary">載入 Due 單字</button>
-        </div>
-        <div id="fcSpinner" style="display:none;margin-top:8px"><span class="spinner" aria-hidden="true"></span></div>
-        <div id="fcArea" style="margin-top:8px"></div>
-    </div>
-
-    <script>
-    // Small utility: toast
-    function toast(msg, type=''){
-        const e=document.createElement('div');e.className='toast';e.textContent=msg;document.body.appendChild(e);setTimeout(()=>e.remove(),3000);
-    }
-
-    // Robust API wrapper per plan
-    async function api(url, opts = {}){
-        const defaultTimeout = opts.timeout || 10000;
-        const controller = new AbortController();
-        const timeout = setTimeout(()=>controller.abort(), defaultTimeout);
-
-        const headers = new Headers(opts.headers || {});
-        const method = (opts.method || 'GET').toUpperCase();
-        if(method !== 'GET' && method !== 'HEAD'){
-            const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-            if(csrf) headers.set('X-CSRF-Token', csrf);
-            const apiToken = localStorage.getItem('vm_api_token');
-            if(apiToken) headers.set('Authorization', 'Bearer ' + apiToken);
-        }
-
-        try{
-            const res = await fetch(url, {...opts, headers, signal: controller.signal});
-            clearTimeout(timeout);
-            if(!res.ok){
-                let body = null;
-                try{ body = await res.json(); } catch(e){ body = await res.text().catch(()=>null); }
-                const err = new Error('API Error: '+res.status);
-                err.status = res.status; err.body = body; throw err;
-            }
-            const ct = res.headers.get('Content-Type') || '';
-            if(ct.includes('application/json')){
-                const json = await res.json();
-                return { body: json, status: res.status, headers: res.headers };
-            }
-            const text = await res.text();
-            return { body: text, status: res.status, headers: res.headers };
-        }catch(err){
-            if(err.name === 'AbortError') throw new Error('Request timed out');
-            throw err;
-        }
-    }
-    async function apiGet(url, opts = {}){
-        const r = await api(url, opts);
-        return r.body;
-    }
-
-    // Load folder select helper
-    async function loadFolderSelect(id){
-        try{
-            const folders = await apiGet('/api/folders');
-            const sel = document.getElementById(id);
-            if(!sel) return;
-            const val = sel.value || 'all';
-            sel.innerHTML = '';
-            sel.appendChild(Object.assign(document.createElement('option'),{value:'all',text:'全部資料夾'}));
-            folders.forEach(f=>{ const o = document.createElement('option'); o.value = f; o.textContent = f; sel.appendChild(o); });
-            sel.value = val;
-        }catch(e){ console.error(e); toast('載入資料夾失敗','error'); }
-    }
-
-    // Management with pagination
-    let mgmtState = {page:1, limit:10, total:0};
-    async function loadManagement(){
-        const folder = document.getElementById('mgmtFolder').value || 'all';
-        const spinner = document.getElementById('mgmtSpinner'); spinner.style.display='inline-block';
-        try{
-            const qs = `?folder=${encodeURIComponent(folder)}&page=${mgmtState.page}&limit=${mgmtState.limit}`;
-            const data = await apiGet('/api/words'+qs);
-            mgmtState.total = data.total || 0;
-            document.getElementById('mgmtCount').textContent = `${mgmtState.total} 個字`;
-            document.getElementById('mgmtPageInfo').textContent = `第 ${data.page} 頁 / 共 ${Math.ceil(mgmtState.total/mgmtState.limit)||1}`;
-            const tbody = document.getElementById('mgmtTableBody');
-            const rows = data.words || [];
-            tbody.innerHTML = rows.map(w=>{
-                // 生成構詞分析顯示
-                let morphologyHtml = '<span style="color: #888; font-size: 0.8rem;">-</span>';
-                if(w.morphology) {
-                    const parts = [];
-                    if(w.morphology.prefix) parts.push(`<span style="color: #6C5CE7; background: rgba(108, 92, 231, 0.1); padding: 2px 4px; border-radius: 3px; font-size: 0.75rem;">${w.morphology.prefix}-</span>`);
-                    if(w.morphology.root) parts.push(`<span style="color: #2e7d32; background: rgba(46, 125, 50, 0.1); padding: 2px 4px; border-radius: 3px; font-size: 0.75rem;">${w.morphology.root}</span>`);
-                    if(w.morphology.suffix) parts.push(`<span style="color: #e65100; background: rgba(230, 81, 0, 0.1); padding: 2px 4px; border-radius: 3px; font-size: 0.75rem;">-${w.morphology.suffix}</span>`);
-                    if(parts.length > 0) morphologyHtml = parts.join(' ');
-                }
-                return `<tr data-id="${w.id}"><td><strong>${escapeHtml(w.english)}</strong></td><td>${escapeHtml(w.chinese)}</td><td><span class="badge-folder">${escapeHtml(w.folder)}</span></td><td>${morphologyHtml}</td><td>${w.error_count||0}</td><td><button class="btn-danger" data-id="${w.id}">刪除</button></td></tr>`;
-            }).join('');
-            // attach delete handlers
-            tbody.querySelectorAll('button.btn-danger').forEach(b=>b.addEventListener('click',()=>onDeleteClicked(parseInt(b.dataset.id))));
-        }catch(err){
-            console.error(err); toast('載入單字失敗','error');
-        }finally{ spinner.style.display='none'; }
-    }
-
-    function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>\"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
-
-    document.getElementById('mgmtPrev').addEventListener('click',()=>{
-        if(mgmtState.page>1){ mgmtState.page--; loadManagement(); }
-    });
-    document.getElementById('mgmtNext').addEventListener('click',()=>{
-        if(mgmtState.page*mgmtState.limit < mgmtState.total){ mgmtState.page++; loadManagement(); }
-    });
-    document.getElementById('mgmtPageSize').addEventListener('change',(e)=>{ mgmtState.limit = parseInt(e.target.value)||10; mgmtState.page=1; loadManagement(); });
-
-    async function onDeleteClicked(id){
-        if(!confirm('確定要刪除嗎？')) return;
-        // optimistic: remove row
-        const row = document.querySelector(`#mgmtTableBody tr[data-id='${id}']`);
-        let backup = null;
-        if(row){ backup = row.cloneNode(true); row.remove(); }
-        const undoToast = document.createElement('div'); undoToast.className='toast'; undoToast.textContent='刪除中...'; document.body.appendChild(undoToast);
-        try{
-            await api(`/api/words/${id}`, {method:'DELETE'});
-            undoToast.textContent = '已刪除'; setTimeout(()=>undoToast.remove(),1200);
-            // reload counts/pagination
-            loadManagement();
-        }catch(err){
-            undoToast.remove();
-            if(backup){ document.getElementById('mgmtTableBody').prepend(backup); backup.querySelector('button.btn-danger').addEventListener('click',()=>onDeleteClicked(id)); }
-            console.error(err); toast('刪除失敗','error');
-        }
-    }
-
-    // Search with accessibility
-    let searchTimer=0; let activeIndex=-1; let searchResults=[];
-    const searchInput = document.getElementById('searchInput');
-    const searchDropdown = document.getElementById('searchDropdown');
-    searchInput.setAttribute('role','combobox');
-    searchInput.setAttribute('aria-haspopup','listbox');
-    searchInput.addEventListener('input', (e)=>{
-        clearTimeout(searchTimer); const kw = e.target.value.trim();
-        if(!kw){ searchDropdown.style.display='none'; searchResults=[]; return; }
-        searchDropdown.style.display='block'; searchDropdown.innerHTML = '<div aria-hidden="true">搜尋中…</div>';
-        searchTimer = setTimeout(async ()=>{
-            try{
-                const words = await apiGet('/api/search?keyword='+encodeURIComponent(kw));
-                searchResults = words.slice(0,12);
-                if(!searchResults.length){ searchDropdown.innerHTML = `<div>${'無結果'}</div>`; return; }
-                activeIndex = -1;
-                searchDropdown.innerHTML = searchResults.map((w, idx)=>{
-                    return `<div role="option" id="sr-${idx}" class="search-dropdown-item" data-idx="${idx}" tabindex="-1" style="padding:6px;border-bottom:1px solid rgba(255,255,255,0.02);display:flex;justify-content:space-between;align-items:center"><div><strong>${escapeHtml(w.english)}</strong><div style="color:#888;font-size:0.9rem">${escapeHtml(w.chinese)}</div></div><div class="badge-folder">${escapeHtml(w.folder)}</div></div>`;
-                }).join('');
-                // attach click
-                searchDropdown.querySelectorAll('[data-idx]').forEach(el=>el.addEventListener('click', (ev)=>{
-                    const idx = parseInt(el.dataset.idx); onSelectSearchResult(idx);
-                }));
-            }catch(err){ console.error(err); searchDropdown.innerHTML = `<div>搜尋失敗</div>`; }
-        }, 250);
-    });
-    searchInput.addEventListener('keydown', (e)=>{
-        if(searchDropdown.style.display==='none') return;
-        if(e.key==='ArrowDown'){ e.preventDefault(); moveActive(1); }
-        if(e.key==='ArrowUp'){ e.preventDefault(); moveActive(-1); }
-        if(e.key==='Enter'){ e.preventDefault(); if(activeIndex>=0) onSelectSearchResult(activeIndex); }
-        if(e.key==='Escape'){ searchDropdown.style.display='none'; }
-    });
-    function moveActive(delta){ const items = searchDropdown.querySelectorAll('[role="option"]'); if(!items.length) return; activeIndex = Math.max(0, Math.min(items.length-1, activeIndex+delta)); items.forEach((it, i)=>it.classList.toggle('active', i===activeIndex)); const id = items[activeIndex].id; searchInput.setAttribute('aria-activedescendant', id); items[activeIndex].scrollIntoView({block:'nearest'}); }
-    function onSelectSearchResult(idx){ const w = searchResults[idx]; if(!w) return; searchDropdown.style.display='none'; toast(`選擇: ${w.english}`); }
-
-    // Flashcards load
-    document.getElementById('fcLoad').addEventListener('click', loadFlashcards);
-    document.getElementById('fcLoadDue').addEventListener('click', loadDueFlashcards);
-    // Hook new primary start button
-    document.getElementById('fcStart').addEventListener('click', async ()=>{
-        const btn = document.getElementById('fcStart');
-        const sel = document.getElementById('fcFolder');
-        const helper = document.getElementById('fcHelper');
-        // If select is hidden, show options and populate
-        if (sel && sel.style.display === 'none') {
-            if (helper) helper.textContent = '選擇資料夾後開始學習';
-            sel.style.display = 'inline-block';
-            try {
-                await loadFolderSelect('fcFolder');
-                sel.focus();
-                // attach a one-time change handler to auto-start when user selects
-                const onChange = async function(){
-                    try{
-                        // hide helper and start
-                        if (helper) helper.textContent = '';
-                        await loadFlashcards();
-                    }catch(e){ console.error(e); toast('載入 flashcards 失敗','error'); }
-                    // remove this handler after triggered
-                    sel.removeEventListener('change', onChange);
-                };
-                sel.addEventListener('change', onChange);
-            } catch (e) {
-                console.error(e); toast('載入資料夾失敗','error');
-            }
-            return;
-        }
-        // Otherwise start learning with selected folder
-        btn.disabled = true; btn.style.opacity = 0.9;
-        try {
-            await loadFlashcards();
-        } finally {
-            btn.disabled = false; btn.style.opacity = 1;
-        }
-    });
-    // Global start in header still calls loadFlashcards via inline onclick
-
-    let flashWords = [];
-    let flashIndex = 0;
-
-    async function loadFlashcards(){
-        const folder = document.getElementById('fcFolder').value || 'all';
-        const spinner = document.getElementById('fcSpinner'); spinner.style.display='inline-block';
-        try{
-            const data = await apiGet('/api/words?folder='+encodeURIComponent(folder)+`&page=1&limit=500`);
-            flashWords = data.words || [];
-            flashIndex = 0;
-            renderFlashCard();
-            // focus the card area for keyboard users
-            document.getElementById('fcArea').focus && document.getElementById('fcArea').focus();
-        }catch(err){ console.error(err); toast('載入 flashcards 失敗','error'); }
-        finally{ spinner.style.display='none'; }
-    }
-
-    async function loadDueFlashcards(){
-        const folder = document.getElementById('fcFolder').value || 'all';
-        const spinner = document.getElementById('fcSpinner'); spinner.style.display='inline-block';
-        try{
-            const data = await apiGet('/api/due?folder='+encodeURIComponent(folder)+`&page=1&limit=500`);
-            flashWords = data.words || [];
-            flashIndex = 0;
-            renderFlashCard();
-        }catch(err){ console.error(err); toast('載入 Due 單字 失敗','error'); }
-        finally{ spinner.style.display='none'; }
-    }
-
-    function renderFlashCard(){
-        const area = document.getElementById('fcArea');
-        if(!flashWords || flashWords.length === 0){ area.innerHTML = '<div>沒有單字</div>'; return; }
-        if(flashIndex >= flashWords.length){ area.innerHTML = `<div>已練習完 ${flashWords.length} 個單字</div>`; return; }
-        const w = flashWords[flashIndex];
-        // show simple card with two action buttons
-        area.innerHTML = `
-            <div style="padding:12px;border-radius:8px;background:rgba(255,255,255,0.02)" tabindex="0">
-                <div style="font-size:1.25rem;font-weight:600">${escapeHtml(w.english)}</div>
-                <div style="color:#B0B8C6;margin-top:6px">${escapeHtml(w.chinese)}</div>
-                <div style="margin-top:8px;display:flex;gap:8px">
-                    <button id="btnKnown" class="btn btn-secondary">我知道</button>
-                    <button id="btnUnknown" class="btn btn-danger">我不會</button>
-                </div>
-                <div style="margin-top:8px;color:#888;font-size:0.85rem">第 ${flashIndex+1} / ${flashWords.length}</div>
+          <div class="due-ring-wrap">
+            <div class="due-ring">
+              <svg viewBox="0 0 120 120">
+                <circle class="due-ring-bg" cx="60" cy="60" r="52"/>
+                <circle class="due-ring-fg" id="due-ring-fg" cx="60" cy="60" r="52"/>
+              </svg>
+              <div class="due-ring-text">
+                <span class="due-ring-num" id="due-num">—</span>
+                <span class="due-ring-sub">待複習</span>
+              </div>
             </div>
-        `;
-        document.getElementById('btnKnown').addEventListener('click', async ()=>{
-            await submitReview(w.id, 5);
-        });
-        document.getElementById('btnUnknown').addEventListener('click', async ()=>{
-            await submitReview(w.id, 2);
-        });
-    }
+          </div>
 
-    async function submitReview(id, quality){
-        try{
-            await api(`/api/words/${id}/review`, {method:'PUT', body: JSON.stringify({quality}), headers: {'Content-Type':'application/json'}});
-            flashIndex++;
-            renderFlashCard();
-        }catch(err){ console.error(err); toast('記錄評分失敗','error'); }
-    }
+          <button class="btn btn-primary btn-full btn-lg" id="today-cta">開始今日練習</button>
+
+          <div id="today-done" class="hidden">
+            <div class="today-done-emoji">🎉</div>
+            <div class="today-done-msg">今天都複習完了！</div>
+            <button class="btn btn-secondary btn-full" id="today-free-btn">自由練習</button>
+          </div>
+        </div>
+
+        <!-- Right / Bottom column: stats -->
+        <div class="today-aside">
+          <div class="section-title" style="margin-bottom:12px">總覽</div>
+          <div class="today-stats">
+            <div class="stat-item">
+              <div class="stat-num" id="total-words-stat">—</div>
+              <div class="stat-label">總單字數</div>
+            </div>
+            <div class="stat-item">
+              <div class="stat-num" id="folders-stat">—</div>
+              <div class="stat-label">資料夾數</div>
+            </div>
+          </div>
+
+          <div class="today-tip card" style="margin-top:16px">
+            <div class="section-title" style="margin-bottom:8px">使用提示</div>
+            <ul class="tip-list">
+              <li>在練習模式中，空白鍵翻牌</li>
+              <li>← 不認識 &nbsp;→ 認識</li>
+              <li>手機左右滑動操作卡片</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /tab-today -->
 
 
-    // Init
-    (async function(){ await loadFolderSelect('mgmtFolder'); /* Do not auto-populate fcFolder to keep it empty until user clicks start */ document.getElementById('mgmtPageSize').value='10'; mgmtState.limit = 10; loadManagement(); })();
-    </script>
+    <!-- ── PRACTICE TAB ────────────────────────────────────────── -->
+    <div id="tab-practice" class="tab-panel">
+      <div class="practice-layout">
+
+        <div class="practice-config">
+          <div>
+            <div class="section-header"><span class="section-title">資料夾</span></div>
+            <div class="folder-pills" id="practice-folder-pills">
+              <div class="spinner"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="section-header" style="margin-bottom:12px">
+              <span class="section-title">模式</span>
+              <span id="practice-word-count" class="text-muted text-sm">…</span>
+            </div>
+            <div class="mode-toggle">
+              <button class="mode-btn active" data-mode="due">待複習</button>
+              <button class="mode-btn" data-mode="all">全部</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="practice-cta">
+          <button class="btn btn-primary btn-lg practice-start-btn-wide" id="practice-start-btn">
+            <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            開始練習
+          </button>
+        </div>
+
+      </div>
+    </div><!-- /tab-practice -->
+
+
+    <!-- ── LIBRARY TAB ─────────────────────────────────────────── -->
+    <div id="tab-library" class="tab-panel">
+
+      <div class="lib-toolbar">
+        <div class="search-bar">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="lib-search" type="search" placeholder="搜尋單字…" autocomplete="off" autocorrect="off" spellcheck="false">
+          <button id="search-clear" class="hidden" aria-label="清除搜尋">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="folder-pills" id="lib-folder-pills">
+        <div class="spinner"></div>
+      </div>
+
+      <div class="word-list" id="word-list">
+        <div class="spinner-wrap"><div class="spinner spinner-lg"></div></div>
+      </div>
+
+      <div class="load-more-wrap hidden" id="load-more-wrap">
+        <button class="btn btn-secondary" id="load-more-btn">載入更多</button>
+      </div>
+
+    </div><!-- /tab-library -->
+
+  </main>
+
+</div><!-- /app -->
+
+
+<!-- ══ SESSION OVERLAY ════════════════════════════════════════ -->
+<div id="session-overlay" class="session-overlay">
+  <div class="session-inner">
+
+    <div class="session-header">
+      <button id="session-close-btn" class="btn-ghost btn-sm">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <div class="session-progress-bar">
+        <div class="session-progress-fill" id="session-progress-fill" style="width:0%"></div>
+      </div>
+      <span class="session-count" id="session-count">1 / 1</span>
+    </div>
+
+    <div class="session-card-area" id="session-card-area">
+      <div class="flip-card" id="flip-card">
+        <div class="flip-card-inner">
+          <div class="flip-front">
+            <div class="card-pos" id="card-pos-front"></div>
+            <div class="card-word" id="card-word">word</div>
+            <div class="card-hint">點此翻牌 · 空白鍵</div>
+          </div>
+          <div class="flip-back">
+            <div class="card-pos" id="card-pos-back"></div>
+            <div class="card-meaning" id="card-meaning">意思</div>
+            <div class="card-folder-tag" id="card-folder-tag"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="session-actions hidden" id="session-actions">
+      <button class="btn-unknown" id="btn-unknown">
+        ✗ 不認識
+        <span class="action-hint">← 左鍵 / 左滑</span>
+      </button>
+      <button class="btn-know" id="btn-know">
+        ✓ 認識
+        <span class="action-hint">→ 右鍵 / 右滑</span>
+      </button>
+    </div>
+
+    <div class="session-summary" id="session-summary" style="display:none">
+      <div class="summary-emoji" id="sum-emoji">🎉</div>
+      <div class="summary-title" id="sum-title">太棒了！</div>
+      <div class="summary-subtitle" id="sum-subtitle">完成 0 個單字</div>
+      <div class="summary-stats">
+        <div class="summary-stat correct">
+          <span class="summary-stat-num" id="sum-correct">0</span>
+          <span class="summary-stat-label">認識</span>
+        </div>
+        <div class="summary-stat wrong">
+          <span class="summary-stat-num" id="sum-wrong">0</span>
+          <span class="summary-stat-label">不認識</span>
+        </div>
+        <div class="summary-stat pct">
+          <span class="summary-stat-num" id="sum-pct">0%</span>
+          <span class="summary-stat-label">準確率</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px">
+        <button class="btn btn-secondary" id="summary-again-btn">再來一次</button>
+        <button class="btn btn-primary" id="summary-done-btn">完成</button>
+      </div>
+    </div>
+
+  </div><!-- /session-inner -->
+</div><!-- /session-overlay -->
+
+
+<!-- ══ FAB (mobile only) ══════════════════════════════════════ -->
+<button class="fab" id="fab" aria-label="新增單字">
+  <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+</button>
+
+
+<!-- ══ SHEET BACKDROP ═════════════════════════════════════════ -->
+<div id="sheet-backdrop" class="sheet-backdrop"></div>
+
+
+<!-- ══ WORD DETAIL SHEET ══════════════════════════════════════ -->
+<div id="word-detail-sheet" class="bottom-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-header">
+    <span class="sheet-title">單字詳情</span>
+    <button class="sheet-close" aria-label="關閉">
+      <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="sheet-body">
+    <div>
+      <div class="detail-word" id="detail-word"></div>
+      <div class="detail-pos" id="detail-pos"></div>
+    </div>
+    <div class="detail-meaning" id="detail-meaning"></div>
+
+    <div class="detail-section hidden" id="detail-morph-wrap">
+      <div class="detail-section-label">構詞分析</div>
+      <div class="morph-badges" id="detail-morph-badges"></div>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-label">學習狀態</div>
+      <div class="srs-grid">
+        <div class="srs-item">
+          <div class="srs-item-label">下次複習</div>
+          <div class="srs-item-val" id="detail-next-val">—</div>
+        </div>
+        <div class="srs-item">
+          <div class="srs-item-label">複習間隔</div>
+          <div class="srs-item-val" id="detail-interval-val">—</div>
+        </div>
+        <div class="srs-item">
+          <div class="srs-item-label">熟悉係數</div>
+          <div class="srs-item-val" id="detail-efactor-val">—</div>
+        </div>
+        <div class="srs-item">
+          <div class="srs-item-label">錯誤次數</div>
+          <div class="srs-item-val" id="detail-errors-val">0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex-row text-muted text-sm">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      <span id="detail-folder-val"></span>
+    </div>
+
+    <div class="divider"></div>
+    <button class="btn btn-danger btn-full" id="detail-delete-btn">刪除單字</button>
+  </div>
+</div>
+
+
+<!-- ══ ADD WORD SHEET ═════════════════════════════════════════ -->
+<div id="add-sheet" class="bottom-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-header">
+    <span class="sheet-title">新增單字</span>
+    <button class="sheet-close" aria-label="關閉">
+      <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="sheet-body">
+    <form id="add-word-form" style="display:contents">
+      <div class="form-group">
+        <label class="form-label" for="add-english">英文單字 *</label>
+        <input class="form-input" id="add-english" type="text" placeholder="e.g. abandon" autocorrect="off" autocapitalize="none" spellcheck="false" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="add-chinese">中文意思 *</label>
+        <input class="form-input" id="add-chinese" type="text" placeholder="e.g. 放棄；遺棄" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="add-folder">資料夾</label>
+        <input class="form-input" id="add-folder" type="text" placeholder="e.g. Unit 1" list="folder-datalist" autocomplete="off">
+        <datalist id="folder-datalist"></datalist>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="add-pos">詞性（選填）</label>
+        <input class="form-input" id="add-pos" type="text" placeholder="e.g. v. / n. / adj.">
+      </div>
+      <button type="submit" class="btn btn-primary btn-full btn-lg">新增</button>
+    </form>
+  </div>
+</div>
+
+
+<!-- ══ TOAST ══════════════════════════════════════════════════ -->
+<div id="toast-container" class="toast-container"></div>
+
+
+<!-- ══ ONBOARDING OVERLAY ════════════════════════════════════ -->
+<div id="onboarding-overlay">
+  <div class="ob-card">
+
+    <!-- Step 1: Auth -->
+    <div class="ob-step active" id="ob-step-auth">
+      <div class="ob-header">
+        <div class="ob-logo">📚</div>
+        <div class="ob-title">歡迎使用 VocabMaster</div>
+        <div class="ob-subtitle">登入以同步學習進度，或以訪客身份立即開始。</div>
+      </div>
+      <div class="ob-body">
+        <!-- Google -->
+        <a class="oauth-btn google-btn" id="ob-google-btn" href="/auth/google">
+          <svg class="oauth-btn-icon" viewBox="0 0 24 24" fill="none">
+            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+          </svg>
+          使用 Google 登入
+        </a>
+        <!-- GitHub -->
+        <a class="oauth-btn github-btn" id="ob-github-btn" href="/auth/github">
+          <svg class="oauth-btn-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/>
+          </svg>
+          使用 GitHub 登入
+        </a>
+
+        <div class="ob-divider">或</div>
+
+        <!-- Email toggle -->
+        <button class="email-form-toggle" id="email-toggle">
+          <span>Email 登入 / 註冊</span>
+          <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="email-form-wrap" id="email-form-wrap">
+          <div class="ob-tabs">
+            <button class="ob-tab-btn active" data-form="login">登入</button>
+            <button class="ob-tab-btn" data-form="register">註冊</button>
+          </div>
+          <input class="form-input" id="ob-email" type="email" placeholder="電子郵件" autocomplete="email">
+          <input class="form-input" id="ob-password" type="password" placeholder="密碼" autocomplete="current-password">
+          <div id="ob-email-error" class="text-sm" style="color:var(--danger);display:none"></div>
+          <button class="btn btn-primary btn-full" id="ob-email-submit">登入</button>
+        </div>
+
+        <div class="ob-skip">
+          <button class="ob-skip-btn" id="ob-skip-btn">先跳過，以訪客身份繼續 →</button>
+        </div>
+      </div>
+    </div><!-- /ob-step-auth -->
+
+    <!-- Step 2: Goal -->
+    <div class="ob-step" id="ob-step-goal">
+      <button class="ob-back-btn" id="ob-back-btn">
+        <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+        返回
+      </button>
+      <div class="ob-header">
+        <div class="ob-title">選擇你的學習目標</div>
+        <div class="ob-subtitle">我們將優先顯示相關單字。可以隨時在設定中更改。</div>
+      </div>
+      <div class="ob-body">
+        <div class="goal-grid" id="goal-grid">
+          <div class="spinner-wrap"><div class="spinner"></div></div>
+        </div>
+      </div>
+      <div class="ob-confirm-btn-wrap">
+        <button class="btn btn-primary btn-full btn-lg" id="ob-confirm-btn" disabled>開始學習</button>
+      </div>
+    </div><!-- /ob-step-goal -->
+
+  </div><!-- /ob-card -->
+</div><!-- /onboarding-overlay -->
+
+
+<!-- ══ ACCOUNT SHEET ══════════════════════════════════════════ -->
+<div id="account-sheet" class="bottom-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-header">
+    <span class="sheet-title">帳號設定</span>
+    <button class="sheet-close" aria-label="關閉">
+      <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+
+  <!-- Logged in state -->
+  <div id="account-logged-in" style="display:none">
+    <div class="account-header">
+      <div class="account-avatar" id="account-avatar"><span id="account-initial">?</span></div>
+      <div>
+        <div class="account-name" id="account-name">—</div>
+        <div class="account-email" id="account-email">—</div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="sheet-body" style="gap:20px">
+      <!-- Learning goal -->
+      <div class="account-section">
+        <div class="account-section-title">學習目標</div>
+        <div class="account-row">
+          <span class="account-row-label">目前</span>
+          <span class="account-row-value" id="account-goal">未設定</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="change-goal-btn">更改目標</button>
+      </div>
+      <!-- OAuth providers -->
+      <div class="account-section">
+        <div class="account-section-title">已連結帳號</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap" id="provider-tags"></div>
+      </div>
+      <!-- Change password (email accounts only) -->
+      <div class="account-section" id="change-pw-section" style="display:none">
+        <div class="account-section-title">修改密碼</div>
+        <input class="form-input" id="new-password" type="password" placeholder="輸入新密碼">
+        <input class="form-input" id="confirm-password" type="password" placeholder="確認新密碼">
+        <button class="btn btn-secondary btn-sm" id="save-pw-btn">儲存新密碼</button>
+      </div>
+      <!-- Logout -->
+      <div class="account-section">
+        <button class="btn btn-danger btn-full" id="logout-btn">登出</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Guest state -->
+  <div id="account-guest-state" style="display:none">
+    <div class="account-header">
+      <div class="account-avatar" style="background:var(--bg-elevated);border-color:var(--border)">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      </div>
+      <div>
+        <div class="account-name">訪客模式</div>
+        <div class="account-guest">登入以儲存學習進度</div>
+      </div>
+    </div>
+    <div class="account-sheet-footer">
+      <a class="oauth-btn google-btn" href="/auth/google">
+        <svg class="oauth-btn-icon" viewBox="0 0 24 24" fill="none">
+          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+        </svg>
+        使用 Google 登入
+      </a>
+      <a class="oauth-btn github-btn" href="/auth/github">
+        <svg class="oauth-btn-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z"/>
+        </svg>
+        使用 GitHub 登入
+      </a>
+      <button class="btn btn-secondary btn-full" id="guest-email-login-btn">Email 登入 / 註冊</button>
+    </div>
+  </div>
+</div><!-- /account-sheet -->
+
+<script src="/static/app.js"></script>
 </body>
 </html>

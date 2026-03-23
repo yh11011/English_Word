@@ -10,7 +10,7 @@ helpers and safer DB patterns. Added minimal SRS (SM-2 inspired) support with
 an auto-migrate gate controlled by MIGRATE_SRS environment variable.
 """
 
-from flask import Flask, render_template, request, jsonify, session, g
+from flask import Flask, render_template, request, jsonify, session, g, redirect
 import sqlite3
 import random
 import os
@@ -19,6 +19,8 @@ import secrets
 import logging
 from functools import lru_cache, wraps
 import time
+import urllib.parse
+import requests as http_requests
 from morphology_analyzer import MorphologyDatabase, MorphologyAnalyzer
 from ai_services import ai_service
 
@@ -38,6 +40,14 @@ if not API_TOKEN:
 DB_NAME = os.environ.get('DB_NAME', 'vocabulary.db')
 # Gate automatic SRS migration: set MIGRATE_SRS=1 to allow ALTER TABLE to add SRS columns
 MIGRATE_SRS = os.environ.get('MIGRATE_SRS', '0') == '1'
+
+# OAuth provider credentials (optional — features gracefully disabled if not set)
+GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+GITHUB_CLIENT_ID     = os.environ.get('GITHUB_CLIENT_ID', '')
+GITHUB_CLIENT_SECRET = os.environ.get('GITHUB_CLIENT_SECRET', '')
+# Base URL for OAuth redirect URIs (e.g. https://yourdomain.com or http://localhost:5000)
+OAUTH_REDIRECT_BASE  = os.environ.get('OAUTH_REDIRECT_BASE', 'http://localhost:5000')
 
 
 # ------------------ DB helpers ------------------
@@ -100,6 +110,32 @@ def init_db():
         # best-effort: ignore index creation failures
         pass
 
+    # 建立 users 資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            email            TEXT UNIQUE,
+            password_hash    TEXT,
+            display_name     TEXT,
+            avatar_url       TEXT,
+            learning_goal    TEXT,
+            onboarding_done  INTEGER DEFAULT 0,
+            created_at       INTEGER DEFAULT (strftime('%s','now'))
+        )
+    """)
+
+    # 建立 OAuth 連結資料表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS oauth_accounts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id),
+            provider    TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            email       TEXT,
+            UNIQUE(provider, provider_id)
+        )
+    """)
+
     conn.commit()
 
     # Ensure SRS columns exist. If MIGRATE_SRS=1 then automatically ALTER TABLE to add missing columns.
@@ -107,6 +143,12 @@ def init_db():
         ensure_srs_columns(conn)
     except Exception as e:
         logging.exception("SRS migration failed or skipped: %s", e)
+
+    # Ensure user profile columns exist (safe migration).
+    try:
+        ensure_user_columns(conn)
+    except Exception as e:
+        logging.exception("User column migration failed: %s", e)
 
 
 # ------------------ SRS / migration helpers ------------------
@@ -167,6 +209,82 @@ def ensure_srs_columns(conn):
             logging.exception("Failed to add column %s", k)
 
 
+def ensure_user_columns(conn):
+    """Add new user profile columns to `users` table if missing (safe, always runs)."""
+    cur = conn.cursor()
+    # Create oauth_accounts table if it doesn't exist yet
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS oauth_accounts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id),
+            provider    TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            email       TEXT,
+            UNIQUE(provider, provider_id)
+        )
+    """)
+    conn.commit()
+
+    cols = _get_table_columns(conn, 'users')
+    new_cols = {
+        'display_name':    'display_name TEXT',
+        'avatar_url':      'avatar_url TEXT',
+        'learning_goal':   'learning_goal TEXT',
+        'onboarding_done': 'onboarding_done INTEGER DEFAULT 0',
+    }
+    for col, defn in new_cols.items():
+        if col not in cols:
+            try:
+                _add_column(conn, 'users', defn)
+                logging.info("Added users column: %s", col)
+            except Exception:
+                logging.exception("Failed to add users column %s", col)
+
+
+def _oauth_upsert_user(conn, provider, provider_id, email, name, avatar):
+    """Find or create a user for the given OAuth identity. Returns (user_id, is_new)."""
+    cur = conn.cursor()
+    # 1. Check existing OAuth link
+    cur.execute('SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_id=?',
+                (provider, str(provider_id)))
+    row = cur.fetchone()
+    if row:
+        return row['user_id'], False
+
+    # 2. Try to link to existing user by email
+    user_id = None
+    if email:
+        cur.execute('SELECT id FROM users WHERE email=?', (email,))
+        existing = cur.fetchone()
+        if existing:
+            user_id = existing['id']
+
+    # 3. Create new user if not found
+    is_new = user_id is None
+    if is_new:
+        cur.execute(
+            'INSERT INTO users (email, display_name, avatar_url) VALUES (?, ?, ?)',
+            (email, name, avatar)
+        )
+        conn.commit()
+        user_id = cur.lastrowid
+    else:
+        # Update profile info from OAuth
+        cur.execute(
+            'UPDATE users SET display_name=COALESCE(display_name, ?), avatar_url=COALESCE(avatar_url, ?) WHERE id=?',
+            (name, avatar, user_id)
+        )
+        conn.commit()
+
+    # 4. Record the OAuth link
+    cur.execute(
+        'INSERT OR IGNORE INTO oauth_accounts (user_id, provider, provider_id, email) VALUES (?, ?, ?, ?)',
+        (user_id, provider, str(provider_id), email)
+    )
+    conn.commit()
+    return user_id, is_new
+
+
 def _fetch_word_by_id(conn, word_id):
     cur = conn.cursor()
     cur.execute("SELECT * FROM words WHERE id = ?", (word_id,))
@@ -192,9 +310,12 @@ def schedule_review(conn, word_id, quality):
         return None
 
     # Read existing SRS values, provide defaults if missing
-    efactor = float(row['efactor'] or 2.5) if 'efactor' in row.keys() else 2.5
-    interval = int(row['interval'] or 0) if 'interval' in row.keys() else 0
-    repetitions = int(row['repetitions'] or 0) if 'repetitions' in row.keys() else 0
+    # Support both 'interval' and 'interval_days' column names
+    row_keys = row.keys()
+    efactor = float(row['efactor'] or 2.5) if 'efactor' in row_keys else 2.5
+    _interval_col = 'interval_days' if 'interval_days' in row_keys else 'interval'
+    interval = int(row[_interval_col] or 0) if _interval_col in row_keys else 0
+    repetitions = int(row['repetitions'] or 0) if 'repetitions' in row_keys else 0
 
     # SM-2 algorithm (standard): adjust efactor and intervals
     if quality < 3:
@@ -220,9 +341,9 @@ def schedule_review(conn, word_id, quality):
 
     next_review = now + interval * 86400
 
-    cur.execute("""
+    cur.execute(f"""
         UPDATE words
-        SET efactor = ?, interval = ?, repetitions = ?, next_review = ?
+        SET efactor = ?, {_interval_col} = ?, repetitions = ?, next_review = ?
         WHERE id = ?
     """, (efactor, interval, repetitions, next_review, word_id))
 
@@ -445,9 +566,166 @@ def auth_me():
     u = get_current_user(conn)
     if not u:
         return jsonify({'success': False, 'user': None}), 200
-    # don't leak password_hash
     u.pop('password_hash', None)
+    # Annotate whether account has a password (for UI: show "change password" or not)
+    cur = conn.cursor()
+    cur.execute('SELECT password_hash FROM users WHERE id=?', (u['id'],))
+    row = cur.fetchone()
+    u['has_password'] = bool(row and row['password_hash'])
+    # Fetch linked OAuth providers
+    cur.execute('SELECT provider FROM oauth_accounts WHERE user_id=?', (u['id'],))
+    u['oauth_providers'] = [r['provider'] for r in cur.fetchall()]
     return jsonify({'success': True, 'user': u})
+
+
+@app.route('/api/user/settings', methods=['PUT'])
+@require_auth
+def update_user_settings():
+    """Update user profile: learning_goal, display_name, onboarding_done."""
+    data = request.get_json(silent=True) or {}
+    conn = get_db()
+    u = get_current_user(conn)
+    if not u:
+        return jsonify({'success': False, 'error': 'not logged in'}), 401
+    cur = conn.cursor()
+    allowed = ('learning_goal', 'display_name', 'onboarding_done')
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify({'success': False, 'error': 'nothing to update'}), 400
+    # Always mark onboarding done when this endpoint is called
+    updates['onboarding_done'] = 1
+    cols = ', '.join(f'{k}=?' for k in updates)
+    vals = list(updates.values()) + [u['id']]
+    cur.execute(f'UPDATE users SET {cols} WHERE id=?', vals)
+    conn.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/api/user/password', methods=['PUT'])
+@require_auth
+def change_password():
+    """Change password for email-registered users."""
+    data = request.get_json(silent=True) or {}
+    new_pw = data.get('password', '').strip()
+    if len(new_pw) < 6:
+        return jsonify({'success': False, 'error': '密碼至少需要 6 個字元'}), 400
+    conn = get_db()
+    u = get_current_user(conn)
+    if not u:
+        return jsonify({'success': False, 'error': 'not logged in'}), 401
+    pw_hash = hashlib.sha256(new_pw.encode()).hexdigest()
+    conn.execute('UPDATE users SET password_hash=? WHERE id=?', (pw_hash, u['id']))
+    conn.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/auth/google')
+def auth_google():
+    if not GOOGLE_CLIENT_ID:
+        return jsonify({'error': 'Google OAuth not configured'}), 501
+    state = secrets.token_urlsafe(16)
+    session['oauth_state'] = state
+    params = urllib.parse.urlencode({
+        'client_id': GOOGLE_CLIENT_ID,
+        'redirect_uri': f'{OAUTH_REDIRECT_BASE}/auth/google/callback',
+        'response_type': 'code',
+        'scope': 'email profile',
+        'state': state,
+        'access_type': 'online',
+    })
+    return redirect(f'https://accounts.google.com/o/oauth2/v2/auth?{params}')
+
+
+@app.route('/auth/google/callback')
+def auth_google_callback():
+    error = request.args.get('error')
+    if error:
+        return redirect(f'/?auth_error={urllib.parse.quote(error)}')
+    code = request.args.get('code')
+    state = request.args.get('state')
+    if not code or state != session.pop('oauth_state', None):
+        return redirect('/?auth_error=invalid_state')
+    try:
+        # Exchange code for token
+        tok = http_requests.post('https://oauth2.googleapis.com/token', data={
+            'code': code,
+            'client_id': GOOGLE_CLIENT_ID,
+            'client_secret': GOOGLE_CLIENT_SECRET,
+            'redirect_uri': f'{OAUTH_REDIRECT_BASE}/auth/google/callback',
+            'grant_type': 'authorization_code',
+        }, timeout=10).json()
+        if 'error' in tok:
+            return redirect(f'/?auth_error={urllib.parse.quote(tok.get("error_description", tok["error"]))}')
+        access_token = tok['access_token']
+        # Fetch user profile
+        profile = http_requests.get('https://www.googleapis.com/oauth2/v2/userinfo',
+                                    headers={'Authorization': f'Bearer {access_token}'}, timeout=10).json()
+        provider_id = str(profile['id'])
+        email = profile.get('email', '')
+        name  = profile.get('name', '')
+        avatar = profile.get('picture', '')
+        conn = get_db()
+        user_id, _ = _oauth_upsert_user(conn, 'google', provider_id, email, name, avatar)
+        session['user_id'] = user_id
+        return redirect('/?oauth=1')
+    except Exception as e:
+        logging.exception("Google OAuth callback failed")
+        return redirect(f'/?auth_error={urllib.parse.quote(str(e))}')
+
+
+@app.route('/auth/github')
+def auth_github():
+    if not GITHUB_CLIENT_ID:
+        return jsonify({'error': 'GitHub OAuth not configured'}), 501
+    state = secrets.token_urlsafe(16)
+    session['oauth_state'] = state
+    params = urllib.parse.urlencode({
+        'client_id': GITHUB_CLIENT_ID,
+        'redirect_uri': f'{OAUTH_REDIRECT_BASE}/auth/github/callback',
+        'scope': 'user:email',
+        'state': state,
+    })
+    return redirect(f'https://github.com/login/oauth/authorize?{params}')
+
+
+@app.route('/auth/github/callback')
+def auth_github_callback():
+    error = request.args.get('error')
+    if error:
+        return redirect(f'/?auth_error={urllib.parse.quote(error)}')
+    code = request.args.get('code')
+    state = request.args.get('state')
+    if not code or state != session.pop('oauth_state', None):
+        return redirect('/?auth_error=invalid_state')
+    try:
+        # Exchange code for token
+        tok = http_requests.post('https://github.com/login/oauth/access_token', data={
+            'client_id': GITHUB_CLIENT_ID,
+            'client_secret': GITHUB_CLIENT_SECRET,
+            'code': code,
+            'redirect_uri': f'{OAUTH_REDIRECT_BASE}/auth/github/callback',
+        }, headers={'Accept': 'application/json'}, timeout=10).json()
+        if 'error' in tok:
+            return redirect(f'/?auth_error={urllib.parse.quote(tok.get("error_description", tok["error"]))}')
+        access_token = tok['access_token']
+        headers = {'Authorization': f'token {access_token}', 'Accept': 'application/json'}
+        profile = http_requests.get('https://api.github.com/user', headers=headers, timeout=10).json()
+        # GitHub may not expose email directly; fetch from /user/emails
+        email = profile.get('email') or ''
+        if not email:
+            emails_resp = http_requests.get('https://api.github.com/user/emails', headers=headers, timeout=10).json()
+            primary = next((e['email'] for e in emails_resp if isinstance(e, dict) and e.get('primary')), None)
+            email = primary or ''
+        provider_id = str(profile['id'])
+        name   = profile.get('name') or profile.get('login', '')
+        avatar = profile.get('avatar_url', '')
+        conn = get_db()
+        user_id, _ = _oauth_upsert_user(conn, 'github', provider_id, email, name, avatar)
+        session['user_id'] = user_id
+        return redirect('/?oauth=1')
+    except Exception as e:
+        logging.exception("GitHub OAuth callback failed")
+        return redirect(f'/?auth_error={urllib.parse.quote(str(e))}')
 
 
 @app.route('/')
@@ -798,7 +1076,7 @@ def get_due_words():
     cursor.execute(count_sql, tuple(params))
     total = cursor.fetchone()['cnt']
 
-    data_sql = f"SELECT id, english, chinese, folder, error_count, created_at, next_review, interval, efactor, repetitions FROM words {where_clause} ORDER BY next_review ASC, folder, english LIMIT ? OFFSET ?"
+    data_sql = f"SELECT id, english, chinese, folder, error_count, part_of_speech, next_review, interval_days as interval, efactor, repetitions FROM words {where_clause} ORDER BY next_review ASC, folder, english LIMIT ? OFFSET ?"
     data_params = params + [limit, offset]
     cursor.execute(data_sql, tuple(data_params))
     words = [dict(row) for row in cursor.fetchall()]
