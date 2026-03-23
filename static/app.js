@@ -147,7 +147,9 @@ function renderPracticeFolderPills() {
   ['all', ...state.folders].forEach(f => {
     const btn = document.createElement('button');
     btn.className = 'pill' + (state.practiceFolder === f ? ' active' : '');
-    btn.textContent = f === 'all' ? '全部' : f;
+    const label = f === 'all' ? '全部' : f;
+    btn.textContent = label;
+    if (f !== 'all') btn.title = f; // tooltip for full name
     btn.onclick = () => {
       state.practiceFolder = f;
       wrap.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
@@ -206,13 +208,29 @@ function openSession() {
   document.getElementById('session-actions').classList.add('hidden');
   renderSessionCard();
   document.addEventListener('keydown', onSessionKey);
+  document.addEventListener('keydown', trapFocus);
   setupSwipe();
+  // Move focus into overlay so keyboard works immediately
+  setTimeout(() => document.getElementById('session-close-btn')?.focus(), 50);
 }
 
 function closeSession() {
   document.getElementById('session-overlay').classList.remove('active');
   document.removeEventListener('keydown', onSessionKey);
+  document.removeEventListener('keydown', trapFocus);
   state.session = null;
+  document.getElementById('practice-start-btn')?.focus();
+}
+
+function trapFocus(e) {
+  if (e.key !== 'Tab') return;
+  const overlay = document.getElementById('session-overlay');
+  if (!overlay?.classList.contains('active')) return;
+  const focusable = Array.from(overlay.querySelectorAll('button:not([disabled]), [tabindex="0"]')).filter(el => el.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 }
 
 function renderSessionCard() {
@@ -277,7 +295,7 @@ function showSummary() {
   sum.style.display = 'flex';
   document.getElementById('sum-emoji').textContent = pct >= 80 ? '🎉' : pct >= 50 ? '💪' : '📖';
   document.getElementById('sum-title').textContent = pct >= 80 ? '太棒了！' : pct >= 50 ? '繼續加油！' : '多多練習！';
-  document.getElementById('sum-subtitle').textContent = `完成 ${total} 個單字`;
+  document.getElementById('sum-subtitle').textContent = `完成 ${total} 個單字，進度已儲存`;
   document.getElementById('sum-correct').textContent = sess.correct;
   document.getElementById('sum-wrong').textContent = sess.wrong;
   document.getElementById('sum-pct').textContent = pct + '%';
@@ -334,7 +352,9 @@ function renderLibFolderPills() {
   ['all', ...state.folders].forEach(f => {
     const btn = document.createElement('button');
     btn.className = 'pill' + (state.libFolder === f ? ' active' : '');
-    btn.textContent = f === 'all' ? '全部' : f;
+    const label = f === 'all' ? '全部' : f;
+    btn.textContent = label;
+    if (f !== 'all') btn.title = f; // tooltip for full name
     btn.onclick = () => {
       state.libFolder = f;
       wrap.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
@@ -638,6 +658,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('load-more-btn')?.addEventListener('click', () => loadMoreWords(false));
 
   setupInfiniteScroll();
+
+  // OAuth buttons: show loading text on click (page will redirect)
+  document.querySelectorAll('.oauth-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      this.style.opacity = '.6';
+      this.style.pointerEvents = 'none';
+      const span = this.querySelector('span');
+      if (span) span.textContent = '跳轉中…';
+    });
+  });
 
   // Onboarding & account
   initOnboardingUI();
