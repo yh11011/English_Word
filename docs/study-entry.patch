@@ -1,0 +1,19 @@
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -297,6 +297,12 @@
+               </a>
+             );
+           })}
++          {import.meta.env.VITE_EXAM_VOCABULARY_ENABLED === "true" && (
++            <a href="https://word.nex11.me/exam-vocabulary">
++              <BookOpen size={19} />
++              英文生字
++            </a>
++          )}
+         </nav>
+         <div className="sidebar-bottom">
+           <div className="scope">
+--- /dev/null
++++ b/src/vite-env.d.ts
+@@ -0,0 +1 @@
++/// <reference types="vite/client" />

@@ -29,3 +29,16 @@ API：未登入拒絕、CSRF、重複收藏、跨帳號隔離、兩種 interval 
 - 登入後 API 傳送完整候選清單（約 3 MB），第一版適合個人使用，未做大量使用者效能測試。
 - 候選字不等於新學會的字；本版保存自行選擇的生字與 SRS 排程，不宣稱測得詞彙量或熟練度。
 - 專用端點沿用目前 word 的登入相容層；舊 checkout 無 JWT helper 時只接受 session + CSRF。既有尚未提交的 SSO 改動不包含在本次提交。
+
+## 待發布版本
+
+Study 側欄修改已在本地完成；該目錄沒有自己的 Git remote，差異保存在 `docs/study-entry.patch`。`src/vite-env.d.ts` 提供 Vite 環境變數型別。以 `VITE_EXAM_VOCABULARY_ENABLED=true` 建置才顯示入口；一般建置預設關閉。word 首頁入口僅在 Blueprint 已註冊時顯示，避免執行中的舊 process 出現無效連結。
+
+發布準備：
+
+1. 備份 word 實際使用的 SQLite（含 WAL 的 SQLite backup API）與兩站目前的建置產物。
+2. 確認服務執行路徑為本工作目錄，載入新版 word，檢查 `/exam-vocabulary` 200、靜態資源 200、未登入的 `/api/exam-vocabulary` 401。
+3. 將已驗證的 Study 啟用版產物發布；API、DNS、Tunnel 與 auth 無須修改。舊 hashed assets 保留供已開啟的頁面使用。
+4. 檢查公開 HTTPS Study 入口、word 頁面及未登入 API；私有學習寫入只在隔離測試環境驗證，不代替使用者建立正式學習資料。
+
+本次尚未重新載入 word 服務或開啟 Study 正式入口；發布需明確指示。驗證建置位於 `/tmp/study-vocab-release`，手機預覽為 `docs/exam-vocabulary-mobile.png`。

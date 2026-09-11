@@ -98,3 +98,4 @@ def register_exam_vocabulary(app, get_db, get_current_user, ensure_csrf_token,
         return response
 
     app.register_blueprint(bp)
+    app.config.setdefault('EXAM_VOCABULARY_ENABLED', True)

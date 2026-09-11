@@ -81,7 +81,9 @@
             </div>
           </div>
 
+          {% if config.get('EXAM_VOCABULARY_ENABLED') %}
           <a class="btn btn-secondary btn-full" href="/exam-vocabulary">歷屆生字：先補基礎詞彙</a>
+          {% endif %}
           <button class="btn btn-primary btn-full btn-lg" id="today-cta">開始今日練習</button>
 
           <div id="today-done" class="hidden">
