@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{ csrf_token }}"><title>歷屆生字 · VocabMaster</title><link rel="stylesheet" href="/static/exam_vocabulary.css"><script src="/static/exam_vocabulary.js" defer></script></head>
+<body><main>
+<nav><a href="/">← 單字首頁／登入</a><a href="https://nex11.me/study/">回 Study 刷題 ↗</a></nav>
+<header><p class="eyebrow">高二 · 段考與學測準備</p><h1>讓下一篇文章，<br>少幾個陌生的字。</h1><p>先看英文，試著想出意思。把不熟的字加入複習，每次補一點基礎。</p></header>
+<div class="tabs"><button id="browse-tab" aria-pressed="true">找出不熟的字</button><button id="review-tab" aria-pressed="false">複習已收藏單字</button></div>
+<p id="status" role="status" aria-live="polite">正在載入…</p>
+<section id="browse"><div class="filters"><label>程度<select id="level"><option value="2">先補基礎：第一、二級</option><option value="4">擴充：第一至四級</option><option value="6">全部：第一至六級</option></select></label><label>找單字<input id="search" type="search" placeholder="輸入英文或中文"></label></div><p id="count"></p><div id="cards"></div><button id="more" hidden>再看 20 個</button>
+<details class="note"><summary>這份清單如何產生？</summary><p>來源為本地英文段考題目的文字片段，按高中分級及不同試卷出現數排序。出現次數不是學測出題機率，也不代表你一定不會。</p><p>中文採用既有詞庫，可能包含多個意思，需配合上下文判斷。原題片段尚未逐題核對，有些只有選項；此頁不提供原題判分。目前尚未加入龍騰課次標籤。</p><p id="audit"></p></details></section>
+<section id="review" hidden><p>先回想意思，再揭曉。每組最多 20 個到期單字。</p><div id="review-card" class="card"></div></section>
+</main></body></html>

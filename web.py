@@ -1920,6 +1920,12 @@ def get_ai_stats():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+from exam_vocabulary import register_exam_vocabulary
+register_exam_vocabulary(app, get_db, get_current_user, ensure_csrf_token,
+                         _is_valid_csrf, globals().get('_try_jwt_auth'), schedule_review,
+                         clear_statistics_cache)
+
+
 if __name__ == '__main__':
     # 初始化資料庫（在 app context 中執行）
     with app.app_context():
